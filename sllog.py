@@ -237,8 +237,8 @@ class Parser:
             self.len = len(data)
             self.payload, self.uid, self.ts = read_content(data, 'HI')
 
-        def timestamp(self, tick):
-            d = tick + self.offset_timestamp + self.BASE_TIME
+        def timestamp(self):
+            d = self.ts + self.offset_timestamp + self.BASE_TIME
             sec = d // 1000
             ms = d % 1000
             ts = time.strftime('%d.%m.%Y %H-%M-%S', time.gmtime(sec)) + f'-{ms:03}:'
@@ -249,7 +249,6 @@ class Parser:
 
         def __str__(self):
             uid = self.uid
-            ts = self.ts
 
             try:
                 rule = self.parser.get_rule(uid)
@@ -273,7 +272,7 @@ class Parser:
                 src = ''
                 content = self.data
 
-            str_timestamp = self.timestamp(ts)
+            str_timestamp = self.timestamp()
             str_uid = f' 0x{uid:04x} '
             str_tail = f'{prefix_dump:>5}{dump(content, 48)}'
             str_fulldump = dump(self.data, 112, [2, 2, 6, self.PACK1, self.PACK2, self.PACK3, self.PACK4, self.PACK5])
