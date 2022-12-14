@@ -101,6 +101,10 @@ def to_str(data, length=0):
     for c in data[0: length]:
         if iswin1251(c):
             s.append(bytes([c]).decode('windows-1251'))
+        elif c == 0x0a:
+            s.append('\\n')
+        elif c == 0x0d:
+            s.append('\\r')
         else:
             s.append('?')
     return ''.join(s)
@@ -113,6 +117,10 @@ def pchar(data):
             break
         if iswin1251(c):
             s.append(bytes([c]).decode('windows-1251'))
+        elif c == 0x0a:
+            s.append('\\n')
+        elif c == 0x0d:
+            s.append('\\r')
         else:
             s.append('?')
     return ''.join(s), len(s)+1
