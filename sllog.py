@@ -129,17 +129,28 @@ def pchar(data):
 # Вычитываем из content данные в формате pattern
 # pattern - текстовая строка, в формате {СИМВОЛ}[ЧИСЛО], где
 # СИМВОЛ определяет тип переменной, возможные значения:
+#   P - Null-terminated строка или строка заданной длины, если указано ЧИСЛО
 #   I - беззнаковый DWORD (4bytes) Little-endian
 #   i - знаковый DWORD (4bytes) Little-endian
 #   H - беззнаковый WORD (2bytes) Little-endian
 #   B - беззнаковый DWORD (4bytes) Big-endian
 # ЧИСЛО необязательное число повторений типа
+# callback - внешний обработчик pattern
 # возвращаем то, что осталось от content и вычитанные данные
-def read_content(content, pattern) -> tuple:
+def read_content(content, pattern, callback=None) -> tuple:
     result = []
     for f in re.finditer(r'(\w)(\d*)', pattern):
         c, n = f.groups()
         d = int(n) if n != '' else 1
+
+        # callback
+        if callback:
+            r = callback(content, c, d)
+            if r:
+                result.append(r[0])
+                content = r[1]
+                continue
+
         if c == 'P':
             if n == '':
                 s, slen = pchar(content)
@@ -169,6 +180,10 @@ def read_content(content, pattern) -> tuple:
                 # Big-endian
                 result.append(struct.unpack('>I', bytes(content[0:4]))[0])
                 content = content[4:]
+
+        elif c == 'd':
+            result.append(dump(content, width=1))
+            content = []
 
         # вроде такие типы не встречаются
         elif c == 'b':
@@ -252,8 +267,14 @@ class Parser:
             ts = time.strftime('%d.%m.%Y %H-%M-%S', time.gmtime(sec)) + f'-{ms:03}:'
             return ts
 
+        def arg_callback(self, content, c, d):
+            if c == 'u':
+                return f'(0x{self.uid:04x})', content
+            else:
+                return None
+
         def arg(self, mask):
-            return read_content(self.payload, mask)
+            return read_content(self.payload, mask, self.arg_callback)
 
         def __str__(self):
             uid = self.uid
@@ -305,7 +326,7 @@ class Parser:
         if self.fw_ver_hash in log_rules.db:
             self.rules = log_rules.db[self.fw_ver_hash]
         else:
-            print('Для этой версии прошивки отсутствуют db rules!')
+            print('Для этой версии прошивки отсутствуют log rules!')
 
     def __store_chunk(self):
         if len(self.__last_chunk) > 0:
