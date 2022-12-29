@@ -1,5 +1,6 @@
 import argparse
 import pathlib
+import sys
 import zipfile
 import time
 import re
@@ -1141,10 +1142,12 @@ class Parser:
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('log', type=str, help='Starline log или zip файл')
+    parser.add_argument('output', type=str, help='результат', nargs='?')
     parser.add_argument('-a', '--analyze', default=False, action='store_true',  help='запустить автоанализ')
     parser.add_argument('-d', '--deep-analyze', default=False, action='store_true',  help='более глубокий и долгий автоанализ')
     parser.add_argument('-o', '--output-level', default=0, type=int, choices=[0, 1, 2], help='уровень детализации лога')
     parser.add_argument('-s', '--split', default=None, type=int, help='разбивать вывод, если время между записями превысит заданное значение')
+    parser.add_argument('-g', '--group', default=False, action='store_true', help='группировать вывод по uid (только для анализа log rules)')
     args = parser.parse_args()
     return args
 
@@ -1177,6 +1180,19 @@ def get_log_content(filename):
 
 def main():
     args = get_args()
+
+    if args.output:
+        # Выходной файл указан, перенаправляем в него stdout
+        sys.stdout = open(args.output, 'w')
+    else:
+        if not sys.stdout.seekable():
+            # Файл не указан и похоже вывод в консоль
+            # генерим имя файла
+            p = pathlib.Path(args.log)
+            output = p.with_suffix(time.strftime('.%d%m%y%H%M%S.txt', time.localtime()))
+            print(f'Пишем в {output}')
+            sys.stdout = output.open('w')
+
     content = get_log_content(args.log)
     if content:
         parser = Parser(content)
@@ -1185,27 +1201,34 @@ def main():
             parser.analyze(args.deep_analyze)
         parser.adjust_timestamp()
 
-
-        # print(*parser.log, sep='\n')
-
-        # print(*[parser.log[i] for i in parser.filter(skip_ts=False)], sep='\n')
-
-        last_ts = None
-        for i in parser.filter(skip_ts=False):
-            line = parser.log[i]
-            if args.split is not None:
-                if line.uid not in parser.ts_uid:
-                    if last_ts is not None:
-                        dt = line.ts - last_ts
-                        if dt > args.split:
-                            dms = dt % 1000
-                            ds = dt // 1000
-                            if ds > 0:
-                                print(f'+{ds}.{dms}')
-                            else:
-                                print(f'+{dms}')
-                    last_ts = line.ts
-            print(str(line))
+        if args.group:
+            groups = dict()
+            for i in parser.filter(skip_ts=False):
+                line = parser.log[i]
+                if line.uid not in groups:
+                    groups[line.uid] = []
+                groups[line.uid].append(line)
+            for uid in groups:
+                print()
+                print(*groups[uid], sep='\n')
+                
+        else:
+            last_ts = None
+            for i in parser.filter(skip_ts=False):
+                line = parser.log[i]
+                if args.split is not None:
+                    if line.uid not in parser.ts_uid:
+                        if last_ts is not None:
+                            dt = line.ts - last_ts
+                            if dt > args.split:
+                                dms = dt % 1000
+                                ds = dt // 1000
+                                if ds > 0:
+                                    print(f'+{ds}.{dms}')
+                                else:
+                                    print(f'+{dms}')
+                        last_ts = line.ts
+                print(str(line))
 
 
 if __name__ == "__main__":
