@@ -259,6 +259,7 @@ class Parser:
             # временные метки в логах хранятся в секундах
             self.offset_timestamp = 0
             self.len = len(data)
+            self.ver_hash = None
             self.payload, self.uid, self.ts = read_content(data, 'HI')
 
         def timestamp(self):
@@ -281,7 +282,7 @@ class Parser:
             uid = self.uid
 
             try:
-                rule = self.parser.get_rule(uid)
+                rule = self.parser.get_rule(self.ver_hash, uid)
                 if rule is None:
                     msg = f'unknown: (uid: 0x{uid:04x})'
                     prefix_dump = 'UNK:'
@@ -318,6 +319,8 @@ class Parser:
         self.ts_uid = set()
         self.fw_ver_hash = ''
         self.rules = {}
+        self.__lines_before_changever = []
+        self.versions_hash = []  # какие версии встречаются
         self.last_timestamp = 0  # в миллисекундах
         self.output_level = 0
         self.__packet_pos = 0
@@ -492,11 +495,14 @@ class Parser:
             self.analyze_add_rule(uid, rule)
         return i0
 
-    def get_rule(self, uid):
-        rule = self.rules.get(uid, None)
-        # if isinstance(rule, int):
-        #     # подмена
-        #     rule = self.rules.get(rule, None)
+    def get_rule(self, ver_hash, uid):
+        if ver_hash:
+            rule = log_rules.db[ver_hash].get(uid, None) if ver_hash in log_rules.db else None
+            if rule is not None:
+                # Есть правило для uid указанной версии
+                return rule
+        # Берём правило для uid из common
+        rule = log_rules.db[None].get(uid, None)
         return rule
 
     def set_timestamp(self, line, *args):
@@ -507,11 +513,20 @@ class Parser:
     def is_timestamp(self, line, *args):
         self.ts_uid.add(line.uid)
 
+    def set_pre_ver(self, line, *args):
+        self.versions_hash.append(args[0])
+        for line in self.__lines_before_changever:
+            line.ver_hash = args[0]
+        self.__lines_before_changever.clear()
+
     # Скорректировать метки времени у всех записей по Временным меткам из лога
+    # Определиться с ver_hash
     def adjust_timestamp(self):
+        self.__lines_before_changever.clear()
         for line in self.log:
             if isinstance(line, self.Line31):
-                rule = self.get_rule(line.uid)
+                self.__lines_before_changever.append(line)
+                rule = self.get_rule(None, line.uid)
                 if rule is not None and len(rule) > 4:
                     # 4-й параметр - имя дополнительного обработчика
                     cb = getattr(self, rule[4], None)
@@ -519,6 +534,9 @@ class Parser:
                         _, *args = line.arg(rule[1])
                         cb(line, *args)
                 line.offset_timestamp = self.last_timestamp
+        # остальные помечаем текущей версией
+        self.set_pre_ver(None, self.fw_ver_hash)
+        print(self.versions_hash)
 
     # Перебираем последовательности
     # в последовательности должна быть запись, соответствующая pattern
@@ -563,6 +581,10 @@ class Parser:
         return None
 
     def analyze(self, deep_analyze):
+        if len(self.versions_hash) > 1:
+            print("В логе записи нескольких версий. Автоанализ для таких логов пока не работает")
+            return
+
         # временные метки
         # Похоже, на всех прошивках имеют код 0xfe01
         def check_ts(l0, l1):
@@ -764,8 +786,14 @@ class Parser:
         # 33
         # 34
         # 35
-        # 67 - ЗАЖИГАНИЕ
+        # 36
+        # 44 - SHOCK LOW (?)
+        # 46
+        # 47 - ДАТЧИК НАКЛОНА
+        # 67 - АКСЕССУАРЫ
         # 68
+        # 74 - IN_GEARBOX_D
+        # 75 - IN_GEARBOX_N
 
         def check_dlg_status(lines):
             nonlocal pre_arg0
@@ -797,7 +825,7 @@ class Parser:
 
         # Для 2.30.0 это 0x02b6
         self.analyze_by_mask(
-            r'^......s=0,[\w=,]{42,}',
+            r'^......(\w=.+?[;,]){10,}',
             ('{}', 'P', '?', '?')
         )
 
@@ -977,7 +1005,7 @@ class Parser:
         # -8 +9 +10 +11 +12
         self.analyze_by_mask(
             r'^......([\+\-]\d+\0){5}',
-            ('{} : {} : {} : {} : {}', 'PPPPP', '?', '? temp двигатель')
+            ('Температура салона за последние 5 минут: {}|{}|{}|{}|{}', 'PPPPP', '?', '? temp салон'),
         )
 
         # Для 2.30.0 это 0x0350
@@ -985,7 +1013,7 @@ class Parser:
         # -3.8 +10.2 +10.2 +10.2 +10.3
         self.analyze_by_mask(
             r'^......([\+\-]\d+\.\d\0){5}',
-            ('{} : {} : {} : {} : {}', 'PPPPP', '?', '? temp салон')
+            ('Температура двигателя за последние 5 минут: {}|{}|{}|{}|{}', 'PPPPP', '?', '? temp двигатель'),
         )
 
         # Для 2.30.0 это 0x031d (без фильтра), 0x031e (с фильтром?), 0x031f (сильный фильтр)
@@ -998,9 +1026,9 @@ class Parser:
             lambda lines: (0 <= lines[1].ts-lines[0].ts <= 3) and (0 <= lines[2].ts-lines[1].ts <= 3) and self.match(lines[1], pat) and self.match(lines[2], pat),
             # lambda lines: lines[0].ts == lines[1].ts == lines[2].ts and self.match(lines[1], pat) and self.match(lines[2], pat),
             [
-                ('no filter voltage: {:5} : {:5} : {:5} : {:5} : {:5}', 'IIIII', '?', '? volt'),
-                ('filter 1  voltage: {:5} : {:5} : {:5} : {:5} : {:5}', 'IIIII', '?', '? volt'),
-                ('filter 2  voltage: {:5} : {:5} : {:5} : {:5} : {:5}', 'IIIII', '?', '? volt')
+                ('Напряжение АКБ за последние 5 минут мВ: {:5}|{:5}|{:5}|{:5}|{:5}', 'IIIII', '?', '? volt'),
+                ('Напряжение АКБ filter1 за 5 минут мВ:   {:5}|{:5}|{:5}|{:5}|{:5}', 'IIIII', '?', '? volt'),
+                ('Напряжение АКБ filter2 за 5 минут мВ:   {:5}|{:5}|{:5}|{:5}|{:5}', 'IIIII', '?', '? volt'),
             ]
         )
 
