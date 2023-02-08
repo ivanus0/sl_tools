@@ -419,12 +419,12 @@ rul = (
     ("BELKACAR: Команда входа в режим 'запрет поездки'", 'PROTO_PARSER'),
     ("BELKACAR: Команда входа в режим 'охрана с открытыми дверями'", 'PROTO_PARSER'),
     ('BELKACAR: Охрана с контролем зон: поставить: сервер', 'PROTO_PARSER'),
-    ('BLE-%s обнаружен(а/о). ID: %d', 'BLE_CONN_SUPERVISOR', 'LOG_INFO', 'comment_smartphone_a1'),
-    ('BLE-%s потерян(а/о). ID: %d', 'BLE_CONN_SUPERVISOR', 'LOG_INFO', 'comment_smartphone_a1'),
+    ('BLE-%s обнаружен(а/о). ID: %d', 'BLE_CONN_SUPERVISOR', 'LOG_INFO', 'comment_tag1'),
+    ('BLE-%s потерян(а/о). ID: %d', 'BLE_CONN_SUPERVISOR', 'LOG_INFO', 'comment_tag1'),
     ('BLE-ОБ v1 обнаружен. ID: %d', 'BLE_CONN_SUPERVISOR'),
     ('BLE-ОБ v1 потерян. ID: %d', 'BLE_CONN_SUPERVISOR'),
-    ('BLE-Связь потеряна: ID: %d', 'TASK_BLE_MANAGER', 'LOG_INFO', 'comment_smartphone_a0'),
-    ('BLE-Связь установлена: ID: %d', 'TASK_BLE_MANAGER', 'LOG_INFO', 'comment_smartphone_a0'),
+    ('BLE-Связь потеряна: ID: %d', 'TASK_BLE_MANAGER', 'LOG_INFO', 'comment_tag0'),
+    ('BLE-Связь установлена: ID: %d', 'TASK_BLE_MANAGER', 'LOG_INFO', 'comment_tag0'),
     ('BLE-геркон обнаружен. ID: %d', 'BLE_CONN_SUPERVISOR'),
     ('BLE-геркон потерян. ID: %d', 'BLE_CONN_SUPERVISOR'),
     ('BLE-лог. вкл. игнор. команду: %d iface: %d', 'APPL_CAR_BSP'),
@@ -1132,7 +1132,7 @@ rul = (
     ('Init: err read = %d addr = 0x%08X', 'EEEMUL'),
     ('KEYS PREPARE DONE', 'SLP_REG'),
     ('KEYS PREPARE START', 'SLP_REG'),
-    ('Key Appl: ID: %d: Отпускание кнопки: T: %d', 'BLE_DEV_PHONE', '', 'comment_smartphone_a0'),
+    ('Key Appl: ID: %d: Отпускание кнопки: T: %d', 'BLE_DEV_PHONE', '', 'comment_tag0'),
     ('LAST_WR_ANS_BUF:', 'BLE_DATA_XCHG'),
     ('LBS: БС потеряны', 'USER_EVENT'),
     ('LBS: местополож. определено', 'USER_EVENT'),
@@ -1285,7 +1285,7 @@ rul = (
     ('PSS: err write = %d state = %d', 'EEEMUL'),
     ('PT: err read = %d addr = 0x%08X', 'EEEMUL'),
     ('PWRMON: GSM сброшен', 'GSM_MNG'),
-    ('Phone: ID: %d: Команда: %d', 'BLE_DEV_PHONE', '', 'comment_cmd_a1'),
+    ('Phone: ID: %d: Команда: %d', 'BLE_DEV_PHONE', '', 'comment_tag0_cmd1'),
     ('Prio = %s', 'GUARD_COMMON'),
     ('Proto-сообщение %d НЕ обрабатывается', 'PROTO_PARSER'),
     ('QMA7981 regs %s:', 'ACC_SENS'),
@@ -1645,8 +1645,8 @@ rul = (
     ('UID HASH сохранен', 'TASK_LOG_DISP'),
     ('UID HASH успешно сохранен', 'TASK_LOG_DISP'),
     ('UID логов: %s', 'TNPROFILER', 'LOG_BLOCK'),
-    ('UI_NOTIFY: idx_tab=%d src=%04X cmd=%d ev=%d', 'UI_TABLE', 'LOG_DEBUG', 'comment_event_a3'),
-    ('UI_NOTIFY: idx_tab=%d src=%04X cmd=%d ev=%d', 'USER_IFACE', 'LOG_DEBUG', 'comment_event_a3'),
+    ('UI_NOTIFY: idx_tab=%d src=%04X cmd=%d ev=%d', 'UI_TABLE', 'LOG_DEBUG', 'comment_cmd2_ev3'),
+    ('UI_NOTIFY: idx_tab=%d src=%04X cmd=%d ev=%d', 'USER_IFACE', 'LOG_DEBUG', 'comment_cmd2_ev3'),
     ('UNKNOWN BB msg type: %d', 'AUTOLINK_BB'),
     ('UNKNOWN FUNC ID: 0x%04X', 'AUTOLINK'),
     ('UNMASKED: %d = %08X', 'SYSDATA'),
@@ -1663,7 +1663,7 @@ rul = (
     ('USB: USB соединение установлено', 'TASK_USB'),
     ('USB: соединение закрыто', 'TASK_IFACE'),
     ('USB: соединение открыто', 'TASK_IFACE'),
-    ('USER EVENT: %d src = %d cmd = %d', 'GSM_NOTIFIER', '', 'comment_event_a0'),
+    ('USER EVENT: %d src = %d cmd = %d', 'GSM_NOTIFIER', '', 'comment_ev0'),
     ('USSD-запрос игнорируется: USSD-запроса нет или телефон уже определен', 'PROTO_PHONE'),
     ('USSD-запрос игнорируется: USSD-запроса нет или телефон уже определен', 'PROTO_PHONE_QUERY'),
     ('USSD-запрос: %s', 'SMS_MANAGER'),
@@ -1974,7 +1974,7 @@ rul = (
     ('Были сработки датчика движения геркона во время разрыва связи. Зона нарушена', 'USER_EVENT'),
     ('Быстро читаем нужно подождать', 'ACC_LOGGER'),
     ('В ARM_TRUNK не переходим т.к. были нарушены зоны кроме багажника (0x%08X)', 'GUARD_STATE_ALERT'),
-    ('В SLM отправлено событие: %d', 'TASK_IFACE', '', 'comment_event_a0'),
+    ('В SLM отправлено событие: %d', 'TASK_IFACE', '', 'comment_ev0'),
     ('В audio_file_info_read передан ошибочный указатель для звука %d', 'AUD_ST'),
     ('В parampd есть настройки', 'REGION_CHANNELS'),
     ('В parampd нет настроек: перенесли ранее или система новая', 'REGION_CHANNELS'),
@@ -2799,7 +2799,7 @@ rul = (
     ('Запуск невозможен: открыт капот', 'ENG_CONTROL'),
     ('Запуск невозможен: программная нейтраль не выполнена', 'ENG_CONTROL'),
     ('Запуск ожидания восст. связи. ID: %d', 'BLE_CONN_SUPERVISOR'),
-    ('Запуск ожидания восстановления связи. ID: %d', 'BLE_CONN_SUPERVISOR', '', 'comment_smartphone_a0'),
+    ('Запуск ожидания восстановления связи. ID: %d', 'BLE_CONN_SUPERVISOR', '', 'comment_tag0'),
     ('Запуск осн. режима работы BLE-мод', 'BLE_FSM_COM'),
     ('Запуск основного режима работы BLE-модуля', 'BLE_FSM_COM'),
     ('Запуск предпускового подогревателя', 'ENG_HEAT'),
@@ -3149,8 +3149,8 @@ rul = (
     ('Количество каналов: %d', 'WIRES'),
     ('Количество параметров eeemul больше максимально допустимого (%d < %d)', 'EEEMUL'),
     ('Команда %d выполнена', 'KONDRA'),
-    ('Команда %d отпр-ся в систему', 'UI_CMD'),
-    ('Команда %d отпр-ся в систему', 'USER_IFACE'),
+    ('Команда %d отпр-ся в систему', 'UI_CMD', 'LOG_DEBUG', 'comment_cmd0'),
+    ('Команда %d отпр-ся в систему', 'USER_IFACE', 'LOG_DEBUG', 'comment_cmd0'),
     ('Команда %s для ID: %d уже находится в списке команд', 'BLE_FSM_XCHG'),
     ('Команда 0x%02X добавлена в очередь', 'SLP'),
     ('Команда 0x%02X получена устройством 0x%02X', 'SLP'),
@@ -5240,7 +5240,7 @@ rul = (
     ('Получена команда смены HASH-кода для %s-%d (DA: 0x%02X)', 'SLP_REG'),
     ('Получена команда смены режима: %d: от %d', 'TASK_RST'),
     ('Получена команда стирания рег. данных из SLP устройств', 'SLP_REG'),
-    ('Получена команда: %s', 'BLE'),
+    ('Получена команда: %s', 'BLE', 'LOG_DEBUG'),
     ('Получена часть SMS: ind=%d', 'SMS_MANAGER'),
     ('Получено SMS от/длина: %s: %d', 'SMS_MANAGER'),
     ('Получено SMS: indx = %d', 'SIM7500E_SMS_SRV'),
@@ -5617,8 +5617,8 @@ rul = (
     ('Режим сна=%d уст-н', 'SIM800C_GSM_SRV'),
     ('Режим сна=%d уст-н', 'TELIT_GSM_SRV'),
     ('Режим: %s', 'BLE_FSM_XCHG'),
-    ('Рез-т cmd=%d: %d', 'UI_TABLE', 'LOG_DEBUG'),
-    ('Рез-т cmd=%d: %d', 'USER_IFACE', 'LOG_DEBUG'),
+    ('Рез-т cmd=%d: %d', 'UI_TABLE', 'LOG_DEBUG', 'comment_cmd0'),
+    ('Рез-т cmd=%d: %d', 'USER_IFACE', 'LOG_DEBUG', 'comment_cmd0'),
     ('Резкое торможение закончилось: xb = %d', 'INSURANCE_DRIVESTYLE_V3'),
     ('Резкое торможение началось: xb = %d', 'INSURANCE_DRIVESTYLE_V3'),
     ('Результат авторизации устройства на сервере: %d', 'EGTS'),
@@ -5754,8 +5754,8 @@ rul = (
     ('Система перешла в роуминг', 'USER_EVENT'),
     ('Система тактируется от HSE', 'CSP_OSC_CTRL'),
     ('Система тактируется от HSI', 'CSP_OSC_CTRL'),
-    ('Система уже в указанном в команде состоянии: cmd=%d', 'UI_CMD'),
-    ('Система уже в указанном в команде состоянии: cmd=%d', 'USER_IFACE'),
+    ('Система уже в указанном в команде состоянии: cmd=%d', 'UI_CMD', 'LOG_DEBUG', 'comment_cmd0'),
+    ('Система уже в указанном в команде состоянии: cmd=%d', 'USER_IFACE', 'LOG_DEBUG', 'comment_cmd0'),
     ('Системная ошибка', 'KONDRA'),
     ('Скачался весь файл', 'FTP'),
     ('Скачался не весь файл', 'FTP'),
@@ -5827,7 +5827,7 @@ rul = (
     ('Соединение FTP открыто', 'SIM800C_GPRS_SRV'),
     ('Соединение FTP открыто', 'TELIT_GPRS_SRV'),
     ('Соединение НЕ установлено: TCP/IP%s', 'SIM800C_GPRS_SRV'),
-    ('Соединение закрыто: ID: %d: Reason: 0x%02X', 'BLE_FSM_COM', '', 'comment_smartphone_a0'),
+    ('Соединение закрыто: ID: %d: Reason: 0x%02X', 'BLE_FSM_COM', '', 'comment_tag0'),
     ('Соединение закрыто: TCP/IP%s', 'SIM800C_GPRS_SRV'),
     ('Соединение разорвано %s: TCP/IP', 'SIM7500E_GPRS_SRV'),
     ('Соединение разорвано: TCP/IP', 'TELIT_GPRS_SRV'),
@@ -5835,7 +5835,7 @@ rul = (
     ('Соединение разорвано: TCP/IP SSL', 'TELIT_GPRS_SRV'),
     ('Соединение разорвано: TCP/IP%s', 'SIM800C_GPRS_SRV'),
     ('Соединение с Autolink при отсутствии регистрации', 'AUTOLINK'),
-    ('Соединение установлено: ID: %d', 'BLE_FSM_COM', 'LOG_INFO', 'comment_smartphone_a0'),
+    ('Соединение установлено: ID: %d', 'BLE_FSM_COM', 'LOG_INFO', 'comment_tag0'),
     ('Соединение установлено: TCP/IP%s', 'SIM800C_GPRS_SRV'),
     ('Создано звуковое оповещение для события %d', 'GSM_NOTIFIER'),
     ('Сообщ. игнорируется (BufRxLen: %d): %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X', 'SERVER_CONN'),
@@ -5984,7 +5984,7 @@ rul = (
     ('Статус зажиг. восстановился', 'ENG_CONTROL_KEY'),
     ('Статус зажигания восстановился!', 'ENG_CONTROL_KEY'),
     ('Статус одиночный', 'REM_TRX_SPI'),
-    ('Статус отправлен: ID: %d', 'BLE_DEV_PHONE', 'LOG_DEBUG', 'comment_smartphone_a0'),
+    ('Статус отправлен: ID: %d', 'BLE_DEV_PHONE', 'LOG_DEBUG', 'comment_tag0'),
     ('Статус постановки штатки блокирован после команды брелка block_arm=%d', 'CAN_STS'),
     ('Статус постановки штатки штатки блокирован после команды брелка block_arm=%d', 'CAN_STS'),
     ('Статус реле 0x%02X: %-14s: %d', 'BLE_DEV_RELAY'),
@@ -6131,8 +6131,8 @@ rul = (
     ('Трубку повесили', 'GSM_CALL_EVTS'),
     ('Увеличение счетчика сбросов модема после неудач. чтения SMS: cnt = %d', 'SMS_MANAGER'),
     ('Увеличение счетчика сбросов модема после неудачного чтения SMS: cnt = %d', 'SMS_MANAGER'),
-    ('Удал. слушателя: idx_tab=%d src=%04X cmd=%d ev=%d', 'UI_TABLE', 'LOG_DEBUG', 'comment_event_a3'),
-    ('Удал. слушателя: idx_tab=%d src=%04X cmd=%d ev=%d', 'USER_IFACE', 'LOG_DEBUG', 'comment_event_a3'),
+    ('Удал. слушателя: idx_tab=%d src=%04X cmd=%d ev=%d', 'UI_TABLE', 'LOG_DEBUG'),
+    ('Удал. слушателя: idx_tab=%d src=%04X cmd=%d ev=%d', 'USER_IFACE', 'LOG_DEBUG'),
     ('Удален предыдущий под номером: 0x%02X', 'BP07'),
     ('Удаление файла: %s%s', 'PROTO_AUTOLINK'),
     ('Удалено SMS: ind=%d', 'SMS_MANAGER'),
@@ -6301,7 +6301,7 @@ rul = (
     ('Чувствительность:SHOCK_LOW:%d:SHOCK_HIGH:%d:MOVE:%d:TILT:%d', 'ACC_LOGGER'),
     ('Чужой номер', 'PHONE_MANAGER'),
     ('Чужой номер тел.', 'SMS_MANAGER'),
-    ('ШВР %d по причине %d', 'REM_UI', 'LOG_INFO', 'comment_event_a1'),
+    ('ШВР %d по причине %d', 'REM_UI', 'LOG_INFO', 'comment_ev1'),
     ('ШВР: повторное оповещ. по двиг. после мягкой посадки', 'REM_UI'),
     ('ШВР: повторное оповещение о тревоге', 'REM_UI'),
     ('ШВР: повторное оповещение по двигателю после мягкой посадки', 'REM_UI'),
@@ -6360,20 +6360,6 @@ rul = (
     ('пошаговый anti-hijack: Режим включен. Ожидание включения зажигания и начала движения', 'GUARD_STATE_DISARM'),
     ('пошаговый anti-hijack: Режим включен. Ожидание открытия двери', 'GUARD_STATE_DISARM'),
 )
-
-
-def comment_smartphone(n, d):
-    tid = d.args[n].value
-    if tid >= 10:
-        d.args[n].print += f' (смартфон {tid - 10})'
-
-
-def comment_smartphone_a0(d):
-    comment_smartphone(0, d)
-
-
-def comment_smartphone_a1(d):
-    comment_smartphone(1, d)
 
 
 event_desc = {
@@ -6502,32 +6488,68 @@ event_desc = {
     330: 'Охрана отключена',
 }
 
-
-def comment_event(n, d):
-    eid = d.args[n].value
-    if eid in event_desc:
-        d.args[n].print += f' ({event_desc[eid]})'
-
-
-def comment_event_a0(d):
-    comment_event(0, d)
-
-
-def comment_event_a1(d):
-    comment_event(1, d)
-
-
-def comment_event_a3(d):
-    comment_event(3, d)
-
-
 cmd_desc = {
+    1: 'Поставить в охрану',
+    2: 'Снять с охраны',
+    3: 'Запустить двигатель',
+    4: 'Остановить двигатель',
+    5: 'Открыть багажник',
+    9: 'Включить сервисный режим',
+    10: 'Отключить сервисный режим',
+    13: 'Посигналить',
+    14: 'Включить "Свободные руки"',
+    15: 'Отключить "Свободные руки"',
+    16: 'Запросить баланс SIM-карты',
+    17: 'Запрос координат',
     19: 'Включить антиограбление по потере метки',
+    23: 'Включить подогреватель двигателя',
+    24: 'Отключить подогреватель двигателя',
+    37: 'Обучение обхода штатного иммобилайзера',
+    42: 'Перезагрузить устройство',
+    43: 'Войти в режим регистрации',
+    44: 'Стереть данные обучения',
+    51: 'Завершить настройку по BLE',
+    59: 'Запросить регистрацию на сервере',
 }
 
 
-def comment_cmd_a1(d):
-    comment_smartphone(0, d)
-    cmd = d.args[1].value
-    if cmd in cmd_desc:
-        d.args[1].print += f' ({cmd_desc[cmd]})'
+def comment_tag(d, n):
+    tid = d.args[n].value
+    if tid >= 10:
+        d.args[n].print += f' (смартфон {tid - 10})'
+
+
+def comment(d, n, desc):
+    id = d.args[n].value
+    if id in desc:
+        d.args[n].print += f' ({desc[id]})'
+
+
+def comment_tag0(d):
+    comment_tag(d, 0)
+
+
+def comment_tag1(d):
+    comment_tag(d, 1)
+
+
+def comment_ev0(d):
+    comment(d, 0, event_desc)
+
+
+def comment_ev1(d):
+    comment(d, 1, event_desc)
+
+
+def comment_cmd0(d):
+    comment(d, 0, cmd_desc)
+
+
+def comment_tag0_cmd1(d):
+    comment_tag(d, 0)
+    comment(d, 1, cmd_desc)
+
+
+def comment_cmd2_ev3(d):
+    comment(d, 2, cmd_desc)
+    comment(d, 3, event_desc)
