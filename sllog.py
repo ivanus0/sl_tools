@@ -72,7 +72,7 @@ def dump(b, width=64, split=None, show_ascii=True):
 
 class Sprintf:
     _cache = {}
-    _fmt = re.compile(r'%[-+0 #]*(?:\d+|\*)?(?:\.\d+|\.\*)?(?:h|l|ll|w|I|I32|I64)?([cdiouxXeEfFgGps])|%%')
+    _fmt = re.compile(r'%[-+0 #]*(?:\d+|\*)?(?:\.(\d+|\*))?(?:h|l|ll|w|I|I32|I64)?([cdiouxXeEfFgGps])|%%')
     _conversion = {
         # 'c': (1, 'B'),
         'd': (4, '<i'), 'i': (4, '<i'),
@@ -87,20 +87,30 @@ class Sprintf:
         if string in Sprintf._cache:
             self.format_str, self._specs = Sprintf._cache[string]
         else:
-            self._specs = []  # list like ('%.5d', 'd')
+            self._specs = []  # list like ('%.5d', 'd', 5)
             self.format_str = self._fmt.sub(self.__repl, string)
             Sprintf._cache[string] = self.format_str, self._specs
 
     def __repl(self, var):
-        specifier = var.group(1)
+        specifier = var.group(2)
         if specifier:
-            self._specs.append((var.group(0), specifier))
+            prec = var.group(1)
+            prec = 0 if prec is None else int(prec) if prec != '*' else None
+            self._specs.append((var.group(0), specifier, prec))
             return '{}'
         else:
             return '%'
 
+    @staticmethod
+    def chain(items):
+        for v in items:
+            if isinstance(v, tuple):
+                yield from v
+            else:
+                yield v
+
     def tostring_fast(self):
-        return self._string % tuple(self.args)
+        return self._string % tuple(self.chain(self.args))
 
     def tostring_cb(self, cb=None, line=None):
         d = SimpleNamespace(
@@ -122,12 +132,34 @@ class Sprintf:
         self.args = []
         for arg in self._specs:
             spec = arg[1]
+            prec = arg[2]
+            if prec is None:
+                # * -> read prec as int
+                length, fmt = self._conversion['d']
+                chunk = buf[offset: offset + length]
+                if len(chunk) != length:
+                    err = KeyError(f'В буфере недостаточно данных для строки "{self.string}"')
+                    return err
+                prec_value = struct.unpack(fmt, chunk)[0]
+                offset += length
+            else:
+                prec_value = prec
+
             if spec == 's':
-                pos = buf.index(b'\0', offset)
-                value = buf[offset:pos].decode('cp1251', errors='backslashreplace')
+                if prec_value != 0:
+                    pos = buf.find(b'\0', offset, offset+prec_value)
+                    if pos < 0:
+                        pos = offset + prec_value
+                    chunk = buf[offset:pos]
+                    offset = pos
+                else:
+                    pos = buf.index(b'\0', offset)
+                    chunk = buf[offset:pos]
+                    offset = pos + 1
+
+                value = chunk.decode('cp1251', errors='backslashreplace')
                 value = value.replace('\n', '\\n')
                 value = value.replace('\r', '\\r')
-                offset = pos + 1
 
             elif spec == 'c':
                 chunk = buf[offset:offset + 1]
@@ -148,7 +180,10 @@ class Sprintf:
                 err = AttributeError(f'Необработанный аргумент "{spec}" в строке "{self.string}"')
                 return err
 
-            self.args.append(value)
+            if prec is None:
+                self.args.append((prec_value, value))
+            else:
+                self.args.append(value)
 
         self.tail_pos = offset
         return None
@@ -160,7 +195,7 @@ class DB:
     RID_TIMESTAMP = 0xfe01
 
     db_common = {
-        RID_CHANGEUID: ('previous uid: %s', '?', ''),
+        RID_CHANGEUID: ('previous uid: %.32s', '?', ''),
         RID_TIMESTAMP: ('Временная метка %d сек', 'TIME', 'TIME_UTC'),
     }
 
@@ -479,6 +514,7 @@ class Parser:
                     s = Sprintf(rule[0])
                     s.unpack_buf(line.payload)
                     pre_uid = s.args[0]
+                    # Попадались пакеты, когда UID заканчивался не /0. Поэтому может быть это и не %s, а %.32s
                     self.seen_uid.append(pre_uid)
                     # Пометить, то что было до сюда, включая эту строку предыдущим uid
                     for pre_line in pre_uid_lines:
