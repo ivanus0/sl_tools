@@ -264,7 +264,7 @@ class Parser:
                 parser.uid = self.uid
             else:
                 if parser.uid != self.uid:
-                    print(f'! uid {self.uid} different from what has been seen before {parser.uid}')
+                    self.parser.error(f'! uid {self.uid} different from what has been seen before {parser.uid}')
 
         def __str__(self):
             comment = f'! uid: 0x{self.pos:06x} 0x{self.hdr:02x}'
@@ -278,7 +278,7 @@ class Parser:
             if not parser.line32:
                 parser.line32 = self
             else:
-                print('! повторно встречен пакет 0x32')
+                self.parser.error('! повторно встречен пакет 0x32')
 
         def __str__(self):
             comment = f'! ?not yet known: 0x{self.pos:06x} 0x{self.hdr:02x}'
@@ -372,15 +372,19 @@ class Parser:
 
     def __init__(self, content):
         self.db = DB()
+        self.errors = []
+        self._parse_errors = 0
         self.log = []
         self.seen_uid = []              # какие uid встретились
         self.line32 = None
         self.uid = ''                   # uid прошивки или последних записей, если в логи несколько версий
-        self.parse_errors = 0
         self.__packet_pos = 0
         self.__last_chunk = bytearray()
         self.parse_log_file(content)
         self.preprocess()
+
+    def error(self, message):
+        self.errors.append(message)
 
     def set_fields(self, fields):
         if fields:
@@ -410,9 +414,9 @@ class Parser:
             data = packet[:-2]
             crc = crc8(data)
             if 0xff != packet[-2]:
-                print(f'! expected 0xFF but found 0x{packet[-2]:02x} @ 0x{packet_pos:06x}')
+                self.error(f'! expected 0xFF but found 0x{packet[-2]:02x} @ 0x{packet_pos:06x}')
             if crc != packet[-1]:
-                print(f'! BAD CRC. expected 0x{packet[-1]:02x} but computed 0x{crc:02x} @ 0x{packet_pos:06x}')
+                self.error(f'! BAD CRC. expected 0x{packet[-1]:02x} but computed 0x{crc:02x} @ 0x{packet_pos:06x}')
             packet_type = data[0]
             if packet_type == 0xEE:
                 # Продолжение предыдущего
@@ -420,7 +424,7 @@ class Parser:
                     self.__last_chunk.extend(data[1:])
                 else:
                     # Иногда попадается на первом пакете в файле
-                    print(f'! not a complete packet @ 0x{packet_pos:06x}, skip')
+                    self.error(f'! not a complete packet @ 0x{packet_pos:06x}, skip')
             else:
                 self.__store_chunk()
                 self.__packet_pos = packet_pos
@@ -428,8 +432,8 @@ class Parser:
         else:
             comment = f'! unknown type: 0x{packet_pos:06x} 0x{packet_hdr:02x}'
             text = dump(packet)
-            print(comment)
-            print(text)
+            self.error(comment)
+            self.error(text)
 
     def __complete(self):
         self.__store_chunk()
@@ -452,10 +456,10 @@ class Parser:
                     # Последовательность \x00 - добивка до 1kb блока
                     pass
                 else:
-                    print(f'! unexpected byte 0x{byte:02x} @ 0x{position:06x}')
-                    self.parse_errors += 1
-                    if self.parse_errors > 35:
-                        print(f'! Слишком много ошибок. Вероятно это не лог')
+                    self.error(f'! unexpected byte 0x{byte:02x} @ 0x{position:06x}')
+                    self._parse_errors += 1
+                    if self._parse_errors > 35:
+                        self.error(f'! Слишком много ошибок. Вероятно это не лог')
                         break
 
             elif not was_1a and is_data:
@@ -472,7 +476,7 @@ class Parser:
                     was_1a, is_data = False, True
                 else:
                     was_1a = False
-                    print(f'! unknown header 0x{byte:02x} @ 0x{position:06x}')
+                    self.error(f'! unknown header 0x{byte:02x} @ 0x{position:06x}')
 
             else:  # was_1a and is_data
                 if byte == 0x2E:
@@ -487,7 +491,7 @@ class Parser:
                     packet_start = position + 1
                     was_1a = False
                 else:
-                    print(f'! unexpected 0x1a, 0x{byte:02x} @ 0x{position-1:06x}')
+                    self.error(f'! unexpected 0x1a, 0x{byte:02x} @ 0x{position-1:06x}')
             position += 1
         self.__complete()
 
@@ -590,6 +594,9 @@ def main():
     content = get_log_content(args.log)
     if content:
         parser = Parser(content)
+        if parser.errors:
+            print(*parser.errors, sep='\n')
+
         parser.set_fields(args.fields)
 
         if parser.log:
