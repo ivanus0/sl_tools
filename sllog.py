@@ -231,7 +231,7 @@ class DB:
         return DB.db[uid]
 
     def get_rule(self, uid, rid):
-        if uid:
+        if uid is not None:
             rul_indexes = self._get_rul_indexes(uid)
             if rul_indexes:
                 if rid < len(rul_indexes):
