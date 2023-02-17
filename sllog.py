@@ -287,8 +287,10 @@ class Parser:
 
     class Line31(LineCommon):
         BASE_TIME = 1325376000000   # 2012-01-01 00:00:00.000
+        INIT_FIELDS = "PVUtRLsmDc"  # Исходное состояние
         # такой вариант чуть быстрее, чем set()
-        _field_v = _field_u = _field_r = _field_l = _field_d = False
+        _field_v = _field_u = _field_r = _field_l = False
+        _field_d = _field_p = False
         _field_t = _field_s = _field_m = True
         _field_c = True
 
@@ -302,6 +304,13 @@ class Parser:
             self.rid, self.ts = struct.unpack('<HI', data[:6])
             self.payload = data[6:]
             self.set_offset_timestamp(0)
+
+        @classmethod
+        def set_fields(cls, fields=None):
+            if not fields:
+                fields = cls.INIT_FIELDS
+            for f in fields:
+                setattr(cls, f'_field_{f.lower()}', f.islower())
 
         def set_offset_timestamp(self, offset_timestamp):
             self.offset_timestamp = offset_timestamp
@@ -343,6 +352,9 @@ class Parser:
                 src = ''
 
             fields = []
+            if self._field_p:
+                f_pos = f'0x{self.pos:06x}'
+                fields.append(f_pos)
             if self._field_v:
                 f_ver = f'{self.parser.db.version(self.uid):>7}'
                 fields.append(f_ver)
@@ -371,6 +383,7 @@ class Parser:
             return ' '.join(fields)
 
     def __init__(self, content):
+        self.Line31.set_fields()        # Исходное состояние
         self.db = DB()
         self.errors = []
         self._parse_errors = 0
@@ -387,9 +400,7 @@ class Parser:
         self.errors.append(message)
 
     def set_fields(self, fields):
-        if fields:
-            for f in fields:
-                setattr(self.Line31, f'_field_{f}', True)
+        self.Line31.set_fields(fields)
 
     def __store_chunk(self):
         if self.__last_chunk:
@@ -546,6 +557,7 @@ def get_args():
     # parser.add_argument('-s', dest='fields', action='append_const', const='s', help='выводить src')
     # parser.add_argument('-m', dest='fields', action='append_const', const='m', help='выводить msg')
     parser.add_argument('-d', dest='fields', action='append_const', const='d', help='выводить dump')
+    parser.add_argument('-p', dest='fields', action='append_const', const='v', help='выводить pos')
     # parser.add_argument('-c', dest='fields', action='append_const', const='c', help='добавлять комментарии')
     parser.add_argument('--split', default=None, type=int,
                         help='разбивать вывод, если время между записями превысит заданное значение, ms')
