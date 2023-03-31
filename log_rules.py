@@ -207,7 +207,7 @@ rul = (
     ('%s regs %s:', 'ACC_SENS'),
     ('%s быстро разрывается: повтор через %d с', 'TCP_IP'),
     ('%s%d : кол-во частей %d', 'LOCALE'),
-    ('%s%s', 'LOCALE'),
+    ('%s%s', 'LOCALE', 'LOG_INFO'),
     ('%s:', 'AUTOLINK'),
     ('%s: %3d: %3d: %5d:%2d.%02d: %s', 'TNPROFILER'),
     ('%s: %s', 'BLE_FW'),
