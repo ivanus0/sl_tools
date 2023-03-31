@@ -386,6 +386,7 @@ class Parser:
         self.Line31.set_fields()        # Исходное состояние
         self.db = DB()
         self.errors = []
+        self.invalid = False
         self._parse_errors = 0
         self.log = []
         self.seen_uid = []              # какие uid встретились
@@ -469,7 +470,8 @@ class Parser:
                 else:
                     self.error(f'! unexpected byte 0x{byte:02x} @ 0x{position:06x}')
                     self._parse_errors += 1
-                    if self._parse_errors > 35:
+                    self.invalid = self._parse_errors > 35
+                    if self.invalid:
                         self.error(f'! Слишком много ошибок. Вероятно это не лог')
                         break
 
