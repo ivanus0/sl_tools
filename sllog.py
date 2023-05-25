@@ -70,6 +70,10 @@ def dump(b, width=64, split=None, show_ascii=True):
         return f'{hex_part}'
 
 
+def uid2str(uid):
+    return uid if uid is not None else '<unknown>'
+
+
 class Sprintf:
     _cache = {}
     _fmt = re.compile(r'%[-+0 #]*(?:\d+|\*)?(?:\.(\d+|\*))?(?:h|l|ll|w|I|I32|I64)?([cdiouxXeEfFgGps])|%%')
@@ -208,18 +212,14 @@ class DB:
     db = {}
 
     @staticmethod
-    def version(uid):
-        return log_rules.db[uid][0] if uid in log_rules.db else '?.?'
-
-    @staticmethod
-    def version_full(uid):
-        return f'{log_rules.db[uid][0]}.{log_rules.db[uid][1]}' if uid in log_rules.db else '?.?'
+    def check_db_ver():
+        return hasattr(log_rules, 'db_ver') and log_rules.db_ver == 3
 
     @staticmethod
     def _get_rul_indexes(uid):
         if uid not in DB.db:
             if uid in log_rules.db:
-                ver, build, *ss = log_rules.db[uid]
+                ver, *ss = log_rules.db[uid]
                 if ss:
                     packed = base64.b64decode(ss[0])
                     DB.db[uid] = struct.unpack(f'<{len(packed)//2}H', packed)
@@ -241,8 +241,37 @@ class DB:
         # Берём из common
         return DB.db_common.get(rid, None)
 
-    def check(self, uid_list):
-        return [(self.version_full(uid), uid) for uid in uid_list if not self._get_rul_indexes(uid)]
+    @staticmethod
+    def ver_all():
+        """
+        Список всех версий в базе
+        """
+        versions = list()
+        for r in log_rules.db.values():
+            if len(r) > 1:
+                versions.extend([v[0] for v in r[0] if v[0] not in versions])
+        return versions
+
+    @staticmethod
+    def ver_list(uid):
+        """
+        Список всех версий, подходящих по uid или [], если не найдено
+        """
+        return log_rules.db[uid][0] if uid in log_rules.db else []
+
+    @staticmethod
+    def uid_list(ver):
+        """
+        Список всех uid, подходящих по версии или [], если не найдено
+        """
+        return [uid for uid, r in log_rules.db.items() if ver in r[0]]
+
+    def required(self, uid_list):
+        """
+        Проверить базу на наличие необходимых uid.
+        Вернёт список отсутствующих, а те, что есть, будут подгружены
+        """
+        return [uid for uid in uid_list if not self._get_rul_indexes(uid)]
 
 
 class Parser:
@@ -260,11 +289,14 @@ class Parser:
         def __init__(self, parser, hdr, pos, data):
             super().__init__(parser, hdr, pos, data)
             self.uid = self.data.decode('cp1251', errors='backslashreplace')
-            if not parser.uid:
-                parser.uid = self.uid
+            if self.uid == '':
+                self.uid = None
             else:
-                if parser.uid != self.uid:
-                    self.parser.error(f'! uid {self.uid} different from what has been seen before {parser.uid}')
+                if parser.uid is None:
+                    parser.uid = self.uid
+                else:
+                    if parser.uid != self.uid:
+                        self.parser.error(f'! uid {self.uid} different from what has been seen before {parser.uid}')
 
         def __str__(self):
             comment = f'! uid: 0x{self.pos:06x} 0x{self.hdr:02x}'
@@ -287,9 +319,9 @@ class Parser:
 
     class Line31(LineCommon):
         BASE_TIME = 1325376000000   # 2012-01-01 00:00:00.000
-        INIT_FIELDS = "PVUtRLsmDc"  # Исходное состояние
+        INIT_FIELDS = "PAVUtRLsmDc"  # Исходное состояние
         # такой вариант чуть быстрее, чем set()
-        _field_v = _field_u = _field_r = _field_l = False
+        _field_a = _field_v = _field_u = _field_r = _field_l = False
         _field_d = _field_p = False
         _field_t = _field_s = _field_m = True
         _field_c = True
@@ -301,6 +333,8 @@ class Parser:
             self.abs_ts = 0
             self.offset_timestamp = 0
             self.uid = None
+            self.ver = None
+            self.det = False
             self.rid, self.ts = struct.unpack('<HI', data[:6])
             self.payload = data[6:]
             self.set_offset_timestamp(0)
@@ -355,11 +389,14 @@ class Parser:
             if self._field_p:
                 f_pos = f'0x{self.pos:06x}'
                 fields.append(f_pos)
+            if self._field_a:
+                f_det = '!' if self.det else ' '
+                fields.append(f_det)
             if self._field_v:
-                f_ver = f'{self.parser.db.version(self.uid):>7}'
+                f_ver = f'{self.ver[0] if self.ver is not None else "?.?":>7}'
                 fields.append(f_ver)
             if self._field_u:
-                f_uid = f'{self.uid:32}'
+                f_uid = f'{uid2str(self.uid):32}'
                 fields.append(f_uid)
             if self._field_t:
                 f_abs_ts = self.timestamp
@@ -382,20 +419,20 @@ class Parser:
 
             return ' '.join(fields)
 
-    def __init__(self, content):
+    def __init__(self, content, custom_uid_list=None):
         self.Line31.set_fields()        # Исходное состояние
         self.db = DB()
         self.errors = []
         self.invalid = False
         self._parse_errors = 0
         self.log = []
-        self.seen_uid = []              # какие uid встретились
+        self.seen_ver = []              # какие версии встретились
         self.line32 = None
-        self.uid = ''                   # uid прошивки или последних записей, если в логи несколько версий
+        self.uid = None                 # uid прошивки или последних записей, если в логи несколько версий
         self.__packet_pos = 0
         self.__last_chunk = bytearray()
         self.parse_log_file(content)
-        self.preprocess()
+        self.preprocess(custom_uid_list)
 
     def error(self, message):
         self.errors.append(message)
@@ -509,9 +546,22 @@ class Parser:
         self.__complete()
 
     # Посчитать абсолютное время события и определиться с версией
-    def preprocess(self):
+    def preprocess(self, custom_uid_list):
+        _custom_uid_list = custom_uid_list.copy() if custom_uid_list is not None else None
+        pattern_ver = re.compile(br'(\d+)\.(\d+)\.(\d+)\.(\d+)\((\w+)\)')
         pre_uid_lines = []
+        seen_ver = set()
+        blocks = []
         last_offset_timestamp = 0
+
+        def add_block(_uid):
+            # Отсортировать встреченные версии по убыванию. Самая старшая вероятно и будет версией прошивки
+            if pre_uid_lines:
+                versions = tuple(sorted(seen_ver, reverse=True))
+                blocks.append({'uid': _uid, 'versions': versions, 'lines': pre_uid_lines})
+
+        def tup2ver(_ver):
+            return f'{_ver[0]}.{_ver[1]}.{_ver[2]}', f'{_ver[3]}' if _ver[-1] == 'public' else f'{_ver[3]}({_ver[4]})'
 
         for line in self.log:
             pre_uid_lines.append(line)
@@ -530,27 +580,114 @@ class Parser:
                 if rule is not None:
                     s = Sprintf(rule[0])
                     s.unpack_buf(line.payload)
-                    pre_uid = s.args[0]
+                    uid = s.args[0]
                     # Попадались пакеты, когда UID заканчивался не /0. Поэтому может быть это и не %s, а %.32s
-                    self.seen_uid.append(pre_uid)
-                    # Пометить, то что было до сюда, включая эту строку предыдущим uid
-                    for pre_line in pre_uid_lines:
-                        pre_line.uid = pre_uid
+                    # если был /0, то оставляем неопределённый uid
+                    add_block(None if uid == '' else s.args[0])
                     pre_uid_lines = []
+                    seen_ver = set()
+
+            elif line.payload[:10] == b'\xc2\xe5\xf0\xf1\xe8\xff\x20\xcf\xce\x00':  # "Версия ПО\0"
+                # могут попадаться версии и основной прошивки и загрузчика и вообще чего угодно
+                res = pattern_ver.match(line.payload[10:])
+                if res:
+                    seen_ver.add(tuple(v.decode('cp1251', errors='ignore') for v in res.groups()))
 
             # скорректировать время по последней метке
             line.set_offset_timestamp(last_offset_timestamp)
 
-        # остальные помечаем текущей uid
-        self.seen_uid.append(self.uid)
-        for pre_line in pre_uid_lines:
-            pre_line.uid = self.uid
+        add_block(self.uid)
+
+        # Попытаемся подобрать uid, для неопределённых блоков
+        for b in blocks:
+            uid = b['uid']
+            det = uid is None
+            ver = None
+            uid_list = []
+            ver_list = []
+            # приведём в читаемый вид, исключая "0.0.0.0" и удаляя "(public)"
+            for v in b['versions']:
+                if not all(map(lambda n: n == '0', v[:4])):
+                    ver_list.append(tup2ver(v))
+
+            if det:
+                # uid не определён, пытаемся подобрать из версии
+                if b['versions']:
+                    # Определяем по встреченным аналогичным блокам
+                    uu1 = [g['uid'] for g in blocks if g['uid'] is not None and g['versions'] == b['versions']]
+
+                    # Определяем по встреченной версии
+                    v2 = tup2ver(b['versions'][0])
+                    uu2 = self.db.uid_list(v2)
+
+                    uu = set(uu1) & set(uu2)
+                    if len(uu) == 1:
+                        uid = uu.pop()
+                        ver = v2
+                    elif len(uu1) > 0:
+                        uid = uu1[0]
+                    elif len(uu2) > 0:
+                        uid = uu2[0]
+                        ver = v2
+
+                    uid_list.extend(uu1)
+                    uid_list.extend([uid for uid in uu2 if uid not in uid_list])
+
+                else:
+                    # uid нет, версия не определена
+                    pass
+
+            else:
+                # uid точно определён
+                # только один, без вариантов
+                uid_list.append(uid)
+                # но версий может быть несколько, найдём соответствие из базы и той, что засекли в дампе
+                db_ver_list = self.db.ver_list(uid)
+                if len(db_ver_list) == 1:
+                    ver = db_ver_list[0]
+                else:
+                    v = set(db_ver_list) & set(ver_list)
+                    if len(v) == 1:
+                        ver = v.pop()
+                # приоритет: точно определённая версия, данные из базы, обнаруженные версии
+                vv = []
+                if ver:
+                    vv.append(ver)
+                vv.extend(v for v in db_ver_list if v not in vv)
+                vv.extend(v for v in ver_list if v not in vv)
+                ver_list = vv
+
+            # определены пользовательские uid, их и используем
+            if _custom_uid_list:
+                u = _custom_uid_list.pop(0)
+                if u not in ('', '-') and uid != u:
+                    uid = u
+                    det = True
+                    vv = self.db.ver_list(uid)
+                    if vv:
+                        ver = vv[0]
+                    # ver_list.extend([v for v in vv if v not in ver_list])
+
+            self.seen_ver.append({
+                'det': det,             # возможно, uid определён неточно
+                'uid': uid,             # какой uid будет использован
+                'ver': ver,             # точная версия прошивки
+                'uid_list': uid_list,   # возможные uid, если определитель сработал неверно
+                'ver_list': ver_list    # возможные версии прошивки
+            })
+
+            for line in b['lines']:
+                line.uid = uid
+                line.ver = ver
+                line.det = det
 
 
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('log', type=str, help='Starline log или zip файл')
     parser.add_argument('output', type=str, help='результат', nargs='?')
+    parser.add_argument('-a', dest='fields', action='append_const', const='a', help='выводить метку неточно')
+    parser.add_argument('-A', dest='fields', action='append_const', const='A', help='скрыть метку')
     parser.add_argument('-v', dest='fields', action='append_const', const='v', help='выводить версию')
     parser.add_argument('-u', dest='fields', action='append_const', const='u', help='выводить uid')
     # parser.add_argument('-t', dest='fields', action='append_const', const='t', help='выводить timestamp')
@@ -563,6 +700,8 @@ def get_args():
     # parser.add_argument('-c', dest='fields', action='append_const', const='c', help='добавлять комментарии')
     parser.add_argument('--split', default=None, type=int,
                         help='разбивать вывод, если время между записями превысит заданное значение, ms')
+    parser.add_argument('--uid', default=None, type=str, dest='uid', nargs='+',
+                        help='использовать эти uid, для пропуска используйте "" или -')
     args = parser.parse_args()
     return args
 
@@ -591,6 +730,10 @@ def get_log_content(filename):
 
 
 def main():
+    if not DB.check_db_ver():
+        print('Версия базы не соответствует')
+        sys.exit(-1)
+
     args = get_args()
 
     if args.output:
@@ -607,14 +750,37 @@ def main():
 
     content = get_log_content(args.log)
     if content:
-        parser = Parser(content)
+        parser = Parser(content, args.uid)
+
+        det = any(v['det'] for v in parser.seen_ver)
+        if det:
+            parser.set_fields('a')
+        if args.fields:
+            parser.set_fields(args.fields)
+
         if parser.errors:
             print(*parser.errors, sep='\n')
 
-        parser.set_fields(args.fields)
-
         if parser.log:
-            list(map(lambda v: print(f'Отсутствует база для версии {v[0]} ({v[1]})'), parser.db.check(parser.seen_uid)))
+            missing = parser.db.required([u['uid'] for u in parser.seen_ver])
+
+            # Если есть детектируемые версии, то выведем подробный список версий
+            if det:
+                if 'A' not in args.fields:
+                    print(f'Строки, помеченные "!", возможно, раскодированы неверно')
+                for v in parser.seen_ver:
+                    mark = '!' if v['det'] else ' '
+                    ver = f"{v['ver'][0]}.{v['ver'][1]}" if v['ver'] is not None else '?.?.?'
+                    uid = uid2str(v['uid'])
+                    m = ' - нет в базе!' if v['uid'] in missing else ' '*14 if missing else ''
+                    ver_list = [f'{v[0]}.{v[1]}' for v in v['ver_list']]
+                    print(f"{mark} будет использован uid: {uid:>32}{m}  Версия: {ver:12}   "
+                          f"Возможные uid, ver: {v['uid_list']}, {ver_list}")
+            else:
+                for u in missing:
+                    vv = parser.db.ver_list(u)
+                    ver = ', '.join([f'{v[0]}.{v[1]}' for v in vv]) if vv else '?.?.?'
+                    print(f'Отсутствует база для версии {uid2str(u)} [{ver}]')
 
         last_ts = None
         for line in parser.log:
