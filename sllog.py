@@ -341,7 +341,7 @@ class Parser:
 
         @classmethod
         def set_fields(cls, fields=None):
-            if not fields:
+            if fields is None:
                 fields = cls.INIT_FIELDS
             for f in fields:
                 setattr(cls, f'_field_{f.lower()}', f.islower())
@@ -683,26 +683,46 @@ class Parser:
 
 
 def get_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('log', type=str, help='Starline log или zip файл')
-    parser.add_argument('output', type=str, help='результат', nargs='?')
-    parser.add_argument('-a', dest='fields', action='append_const', const='a', help='выводить метку неточно')
-    parser.add_argument('-A', dest='fields', action='append_const', const='A', help='скрыть метку')
-    parser.add_argument('-v', dest='fields', action='append_const', const='v', help='выводить версию')
-    parser.add_argument('-u', dest='fields', action='append_const', const='u', help='выводить uid')
-    # parser.add_argument('-t', dest='fields', action='append_const', const='t', help='выводить timestamp')
-    parser.add_argument('-r', dest='fields', action='append_const', const='r', help='выводить rid')
-    parser.add_argument('-l', dest='fields', action='append_const', const='l', help='выводить log_level')
-    # parser.add_argument('-s', dest='fields', action='append_const', const='s', help='выводить src')
-    # parser.add_argument('-m', dest='fields', action='append_const', const='m', help='выводить msg')
-    parser.add_argument('-d', dest='fields', action='append_const', const='d', help='выводить dump')
-    parser.add_argument('-p', dest='fields', action='append_const', const='v', help='выводить pos')
-    # parser.add_argument('-c', dest='fields', action='append_const', const='c', help='добавлять комментарии')
+    default = Parser.Line31.INIT_FIELDS
+    desc = {
+        'a': ('Показать метку автоопределения. Автоматически, если не указан ключ -A ', 'Скрыть метку'),
+        'v': ('Показать версию', 'Скрыть версию'),
+        'u': ('Показать uid', 'Скрыть uid'),
+        't': ('Показать timestamp', 'Скрыть timestamp'),
+        'r': ('Показать rid', 'Скрыть rid'),
+        'l': ('Показать log_level', 'Скрыть log_level'),
+        's': ('Показать src', 'Скрыть src'),
+        'm': ('Показать msg', 'Скрыть msg'),
+        'd': ('Показать dump', 'Скрыть dump'),
+        'p': ('Показать pos', 'Скрыть pos'),
+        'c': ('Добавлять комментарии', 'Не добавлять комментарии'),
+    }
+    # Подготовить список полей, сохранив последовательность desc
+    d = list(default.lower())
+    fields = [f for f in desc if f in d and (d.remove(f) or True)]
+    fields.extend(d)
+
+    parser = argparse.ArgumentParser(usage=f'%(prog)s [-{"".join(fields)}] [--split SPLIT] [--uid UID [UID ...]] '
+                                           'log [output]')
+    parser.add_argument('log', type=str, help='StarLine log или zip файл')
+    parser.add_argument('output', type=str, nargs='?',
+                        help='Результат. Если не указан, будет сгенерирован автоматически')
+    for lo in fields:
+        up = lo.upper()
+        g = parser.add_mutually_exclusive_group()
+        h = '* ' if lo in default and lo in desc else ''
+        g.add_argument(f'-{lo}', dest='fields', action='append_const', const=lo,
+                       help=h+desc[lo][0] if lo in desc else None)
+        h = '* ' if up in default and lo in desc else ''
+        g.add_argument(f'-{up}', dest='fields', action='append_const', const=up,
+                       help=h+desc[lo][1] if lo in desc else None)
     parser.add_argument('--split', default=None, type=int,
-                        help='разбивать вывод, если время между записями превысит заданное значение, ms')
+                        help='Разбивать вывод, если время между записями превысит заданное значение, ms')
     parser.add_argument('--uid', default=None, type=str, dest='uid', nargs='+',
-                        help='использовать эти uid, для пропуска используйте "" или -')
-    args = parser.parse_args()
+                        help='Использовать эти uid. Для пропуска используйте "" или -')
+    args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
+    if args.fields is None:
+        args.fields = []
     return args
 
 
@@ -774,7 +794,7 @@ def main():
                     uid = uid2str(v['uid'])
                     m = ' - нет в базе!' if v['uid'] in missing else ' '*14 if missing else ''
                     ver_list = [f'{v[0]}.{v[1]}' for v in v['ver_list']]
-                    print(f"{mark} будет использован uid: {uid:>32}{m}  Версия: {ver:12}   "
+                    print(f"{mark} будет использован uid: {uid:>32}{m}  Версия: {ver:13}  "
                           f"Возможные uid, ver: {v['uid_list']}, {ver_list}")
             else:
                 for u in missing:
