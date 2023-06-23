@@ -428,7 +428,7 @@ class Parser:
         self.log = []
         self.seen_ver = []              # какие версии встретились
         self.line32 = None
-        self.uid = None                 # uid прошивки или последних записей, если в логи несколько версий
+        self.uid = None                 # uid прошивки, или последних записей, если в логе несколько версий
         self.__packet_pos = 0
         self.__last_chunk = bytearray()
         self.parse_log_file(content)
@@ -737,7 +737,7 @@ def get_log_content(filename):
         except zipfile.BadZipFile:
             print('Архив повреждён')
             return None
-        log_filename = next(iter([fn for fn in z.namelist() if pathlib.Path(fn).suffix.lower() == '.log']), None)
+        log_filename = next(iter((fn for fn in z.namelist() if pathlib.Path(fn).suffix.lower() == '.log')), None)
         if log_filename:
             content = z.read(log_filename)
             z.close()
