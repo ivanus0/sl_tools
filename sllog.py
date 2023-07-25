@@ -800,7 +800,13 @@ def main():
                 for u in missing:
                     vv = parser.db.ver_list(u)
                     ver = ', '.join([f'{v[0]}.{v[1]}' for v in vv]) if vv else '?.?.?'
-                    print(f'Отсутствует база для версии {uid2str(u)} [{ver}]')
+                    if vv:
+                        add_info = ''
+                    else:
+                        ver_list = [s['ver_list'] for s in parser.seen_ver if s['uid'] == u][0]
+                        ver_list = [f'{v[0]}.{v[1]}' for v in ver_list]
+                        add_info = f'  Возможные ver: {ver_list}'
+                    print(f'Отсутствует база для версии {uid2str(u)} [{ver}]{add_info}')
 
         last_ts = None
         for line in parser.log:
