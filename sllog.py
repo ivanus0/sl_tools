@@ -157,9 +157,14 @@ class Sprintf:
                     chunk = buf[offset:pos]
                     offset = pos
                 else:
-                    pos = buf.index(b'\0', offset)
-                    chunk = buf[offset:pos]
-                    offset = pos + 1
+                    pos = buf.find(b'\0', offset)
+                    if pos < 0:
+                        # попытаемся отобразить даже повреждённые строки
+                        chunk = buf[offset:] + b'\x19'  # ASCII == end of medium
+                        offset = len(buf)
+                    else:
+                        chunk = buf[offset:pos]
+                        offset = pos + 1
 
                 value = chunk.decode('cp1251', errors='backslashreplace')
                 value = value.replace('\n', '\\n')
