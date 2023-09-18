@@ -2852,7 +2852,7 @@ rul = (
     ('Изменение резких поворотов: было: %d стало: %d', 'AUTOLINK'),
     ('Изменение резких торможений: было: %d стало: %d', 'AUTOLINK'),
     ('Изменение резких ускорений: было: %d стало: %d', 'AUTOLINK'),
-    ('Изменение статуса %d: %d', 'CAN_STS', 'LOG_DEBUG'),
+    ('Изменение статуса %d: %d', 'CAN_STS', 'LOG_DEBUG', 'comment_cansts0_state1'),
     ('Изменение статуса %s: %s', 'CAN_STS', 'LOG_DEBUG'),
     ('Изменены настройки авторизации!', 'ENG'),
     ('Изменили функцию и тип канала %d: %s -> %s 0x%04X -> 0x%04X', 'APPL_CAR_IFACE'),
@@ -6388,6 +6388,42 @@ cmd_rem = {
     27: 'Включить/отключить датчик наклона {1L,3S}',
 }
 
+cansts_desc = {
+    1: 'driver_door',
+    2: 'passenger_door',
+    3: 'trunk',
+    4: 'hood',
+    5: 'ignition',
+    7: 'brake_pedal',
+    8: 'park_brake',
+    10: 'lock',
+    12: 'open_trunk_cmd',
+    13: 'factory_arm',
+    14: 'factory_disarm',
+    17: 'acc',
+    19: 'factory_alarm',
+    20: 'side_light',
+    21: 'low_light',
+    22: 'high_light',
+    23: 'seatbelt',
+    24: 'gear_r',
+    25: 'gear_p',
+    29: 'ext_btn',
+    31: 'remote_start',
+    33: 'btn',
+    74: 'gear_d',
+    75: 'gear_n',
+    76: 'neutral',
+    77: 'reverse',
+    79: 'remote_move',
+    103: 'climate',
+}
+
+cansts_state_desc = {
+    1: 'active',
+    2: 'passive',
+}
+
 
 def comment_tag(d, n):
     v = d.args[n].value
@@ -6433,3 +6469,8 @@ def comment_cmd2_ev3(d):
 
 def comment_rem0(d):
     comment(d, 0, cmd_rem)
+
+
+def comment_cansts0_state1(d):
+    comment(d, 0, cansts_desc)
+    comment(d, 1, cansts_state_desc)
