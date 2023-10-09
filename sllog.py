@@ -121,8 +121,10 @@ class Sprintf:
             string=self.format_str,
             args=tuple(SimpleNamespace(
                 print=a[0] % v if v is not None else f'{{{a[0]}}}',
-                value=v) for a, v in zip_longest(self._specs, self.args)),
-            line=line)
+                value=v
+            ) for a, v in zip_longest(self._specs, self.args)),
+            line=line
+        )
         if callable(cb):
             cb(d)
         return d.string.format(*[a.print for a in d.args])
