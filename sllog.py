@@ -608,7 +608,9 @@ class Parser:
         # Попытаемся подобрать uid, для неопределённых блоков
         for b in blocks:
             uid = b['uid']
-            det = uid is None
+            # Иногда встречаются логи, которые начинаются с RID_CHANGEUID с пустым uid.
+            # Игнорируем автоопределение для таких строк.
+            det = uid is None and not all([line.rid in DB.services_rid for line in b['lines']])
             ver = None
             uid_list = []
             ver_list = []
@@ -645,24 +647,25 @@ class Parser:
                     pass
 
             else:
-                # uid точно определён
-                # только один, без вариантов
-                uid_list.append(uid)
-                # но версий может быть несколько, найдём соответствие из базы и той, что засекли в дампе
-                db_ver_list = self.db.ver_list(uid)
-                if len(db_ver_list) == 1:
-                    ver = db_ver_list[0]
-                else:
-                    v = set(db_ver_list) & set(ver_list)
-                    if len(v) == 1:
-                        ver = v.pop()
-                # приоритет: точно определённая версия, данные из базы, обнаруженные версии
-                vv = []
-                if ver:
-                    vv.append(ver)
-                vv.extend(v for v in db_ver_list if v not in vv)
-                vv.extend(v for v in ver_list if v not in vv)
-                ver_list = vv
+                # Или точно определён только один uid
+                # Или в записях только служебные rid, которые не привязаны к uid
+                if uid is not None:
+                    uid_list.append(uid)
+                    # но версий может быть несколько, найдём соответствие из базы и той, что засекли в дампе
+                    db_ver_list = self.db.ver_list(uid)
+                    if len(db_ver_list) == 1:
+                        ver = db_ver_list[0]
+                    else:
+                        v = set(db_ver_list) & set(ver_list)
+                        if len(v) == 1:
+                            ver = v.pop()
+                    # приоритет: точно определённая версия, данные из базы, обнаруженные версии
+                    vv = []
+                    if ver:
+                        vv.append(ver)
+                    vv.extend(v for v in db_ver_list if v not in vv)
+                    vv.extend(v for v in ver_list if v not in vv)
+                    ver_list = vv
 
             # определены пользовательские uid, их и используем
             if _custom_uid_list:
@@ -789,7 +792,10 @@ def main():
             print(*parser.errors, sep='\n')
 
         if parser.log:
-            missing = parser.db.required([u['uid'] for u in parser.seen_ver])
+            # полный список, с возможными повторениями
+            seen_uid = [u['uid'] for u in parser.seen_ver if u['uid'] is not None]
+            # пропущенный список, с возможными повторениями
+            missing_uid = parser.db.required(seen_uid)
 
             # Если есть детектируемые версии, то выведем подробный список версий
             if det:
@@ -799,12 +805,12 @@ def main():
                     mark = '!' if v['det'] else ' '
                     ver = f"{v['ver'][0]}.{v['ver'][1]}" if v['ver'] is not None else '?.?.?'
                     uid = uid2str(v['uid'])
-                    m = ' - нет в базе!' if v['uid'] in missing else ' '*14 if missing else ''
+                    m = ' - нет в базе!' if v['uid'] in missing_uid else ' '*14 if missing_uid else ''
                     ver_list = [f'{v[0]}.{v[1]}' for v in v['ver_list']]
                     print(f"{mark} будет использован uid: {uid:>32}{m}  Версия: {ver:13}  "
                           f"Возможные uid, ver: {v['uid_list']}, {ver_list}")
             else:
-                for u in missing:
+                for u in missing_uid:
                     vv = parser.db.ver_list(u)
                     ver = ', '.join([f'{v[0]}.{v[1]}' for v in vv]) if vv else '?.?.?'
                     if vv:
