@@ -114,20 +114,27 @@ class Sprintf:
                 yield v
 
     def tostring_fast(self):
+        # быстро, но без обработки ошибок
         return self._string % tuple(self.chain(self.args))
 
     def tostring_cb(self, cb=None, line=None):
-        d = SimpleNamespace(
-            string=self.format_str,
-            args=tuple(SimpleNamespace(
-                print=a[0] % v if v is not None else f'{{{a[0]}}}',
-                value=v
-            ) for a, v in zip_longest(self._specs, self.args)),
-            line=line
-        )
+        # использую zip_longest для обработки возможных некорректных исходных данных
         if callable(cb):
+            d = SimpleNamespace(
+                string=self.format_str,
+                args=tuple(SimpleNamespace(
+                    print=a[0] % v if v is not None else f'{{{a[0]}}}',
+                    value=v
+                ) for a, v in zip_longest(self._specs, self.args)),
+                line=line
+            )
             cb(d)
-        return d.string.format(*[a.print for a in d.args])
+            return d.string.format(*[a.print for a in d.args])
+        else:
+            # Если нет callback, то и не теряю время на создание полной структуры
+            args = (a[0] % v if v is not None else f'{{{a[0]}}}'
+                    for a, v in zip_longest(self._specs, self.args))
+            return self.format_str.format(*args)
 
     @property
     def string(self):
@@ -361,7 +368,9 @@ class Parser:
         def timestamp(self):
             sec = self.abs_ts // 1000
             ms = self.abs_ts % 1000
-            ts = time.strftime('%d.%m.%Y %H-%M-%S', time.gmtime(sec)) + f'-{ms:03}:'
+            # так немного быстрее, чем time.strftime
+            t = time.gmtime(sec)
+            ts = f'{t.tm_mday:02}.{t.tm_mon:02}.{t.tm_year:04} {t.tm_hour:02}-{t.tm_min:02}-{t.tm_sec:02}-{ms:03}:'
             return ts
 
         def __str__(self):
@@ -610,7 +619,7 @@ class Parser:
             uid = b['uid']
             # Иногда встречаются логи, которые начинаются с RID_CHANGEUID с пустым uid.
             # Игнорируем автоопределение для таких строк.
-            det = uid is None and not all([line.rid in DB.services_rid for line in b['lines']])
+            det = uid is None and not all(line.rid in DB.services_rid for line in b['lines'])
             ver = None
             uid_list = []
             ver_list = []
