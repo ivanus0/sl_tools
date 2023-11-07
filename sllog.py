@@ -169,7 +169,7 @@ class Sprintf:
                     pos = buf.find(b'\0', offset)
                     if pos < 0:
                         # попытаемся отобразить даже повреждённые строки
-                        chunk = buf[offset:] + b'\x19'  # ASCII == end of medium
+                        chunk = buf[offset:] + b'\x85'  # ASCII == horizontal ellipsis
                         offset = len(buf)
                     else:
                         chunk = buf[offset:pos]
