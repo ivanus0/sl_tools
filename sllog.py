@@ -5,7 +5,9 @@ import zipfile
 import time
 import re
 import struct
+import binascii
 import base64
+import zlib
 from itertools import zip_longest
 from types import SimpleNamespace
 
@@ -227,21 +229,44 @@ class DB:
 
     @staticmethod
     def check_db_ver():
-        return hasattr(log_rules, 'db_ver') and log_rules.db_ver == 3
+        return hasattr(log_rules, 'db_ver') and log_rules.db_ver == 4
 
     @staticmethod
     def _get_rul_indexes(uid):
         if uid not in DB.db:
+            DB.db[uid] = None
             if uid in log_rules.db:
                 ver, *ss = log_rules.db[uid]
                 if ss:
-                    packed = base64.b64decode(ss[0])
-                    DB.db[uid] = struct.unpack(f'<{len(packed)//2}H', packed)
-                else:
-                    DB.db[uid] = ()
+                    subst_uid = None
+                    if len(ss[0]) == 32:
+                        subst_uid = ss[0]
+                        if subst_uid not in DB.db:
+                            if subst_uid in log_rules.db:
+                                _, *ss = log_rules.db[subst_uid]
+                                if not ss:
+                                    return None
+                            else:
+                                return None
 
-            else:
-                return None
+                        else:
+                            DB.db[uid] = DB.db[subst_uid]
+                            return DB.db[uid]
+
+                    try:
+                        packed = base64.b64decode(ss[0])
+                        unpacked = zlib.decompress(packed)
+
+                        diff = struct.unpack(f'<{len(unpacked) // 2}h', unpacked)
+                        ofs = 0
+                        DB.db[uid] = tuple((ofs := i + ofs) for i in diff)
+
+                    except (ValueError, binascii.Error, zlib.error):
+                        pass
+
+                    if subst_uid:
+                        DB.db[subst_uid] = DB.db[uid]
+
         return DB.db[uid]
 
     def get_rule(self, uid, rid):
