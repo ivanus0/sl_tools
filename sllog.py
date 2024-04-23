@@ -529,6 +529,13 @@ class Parser:
         self.__store_chunk()
 
     def parse_log_file(self, content):
+        # Иногда вместо дампа лога попадаются файлы в другом формате, содержащий zip c meta.xml.
+        # Всегда размером 1052. Но, учитывая структуру файла, может быть и больше.
+        if 4 <= len(content) <= 4124:
+            if struct.unpack('<I', content[:4])[0] == len(content):
+                self.error('Файл не содержит записей журнала работы')
+                return
+
         packet_hdr = None
         position = 0
         packet_pos = 0
