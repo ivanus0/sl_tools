@@ -215,8 +215,8 @@ class DB:
     RID_TIMESTAMP = 0xfe01
 
     db_common = {
-        RID_CHANGEUID: ('previous uid: %.32s', '?', ''),
-        RID_TIMESTAMP: ('Временная метка %d сек', 'TIME', 'TIME_UTC'),
+        RID_CHANGEUID: ('previous uid: %.32s', 'UID', ''),
+        RID_TIMESTAMP: ('Временная метка %d сек от 2012.01.01', 'TIME', 'TIME_UTC'),
     }
 
     # какие rid игнорировать при выводе с разделением по времени
@@ -314,9 +314,10 @@ class DB:
 
 
 class Parser:
+    INIT_FIELDS = "bPAVUtRLsmDc"    # Исходное состояние
 
     class LineCommon:
-        def __init__(self, parser, hdr, pos, data):
+        def __init__(self, parser: 'Parser', hdr, pos, data):
             self.parser = parser
             self.hdr = hdr
             self.pos = pos
@@ -358,12 +359,7 @@ class Parser:
 
     class Line31(LineCommon):
         BASE_TIME = 1325376000000   # 2012-01-01 00:00:00.000
-        INIT_FIELDS = "PAVUtRLsmDc"  # Исходное состояние
-        # такой вариант чуть быстрее, чем set()
-        _field_a = _field_v = _field_u = _field_r = _field_l = False
-        _field_d = _field_p = False
-        _field_t = _field_s = _field_m = True
-        _field_c = True
+        TAB_POS = {'p': 9, 'a': 2, 'v': 8, 'u': 33, 't': 25, 'r': 7, 'l': 14, 's': 22}
 
         def __init__(self, parser, hdr, pos, data):
             super().__init__(parser, hdr, pos, data)
@@ -374,16 +370,11 @@ class Parser:
             self.uid = None
             self.ver = None
             self.det = False
+            self.ovr = False
+            self.enc = False
             self.rid, self.ts = struct.unpack('<HI', data[:6])
             self.payload = data[6:]
             self.set_offset_timestamp(0)
-
-        @classmethod
-        def set_fields(cls, fields=None):
-            if fields is None:
-                fields = cls.INIT_FIELDS
-            for f in fields:
-                setattr(cls, f'_field_{f.lower()}', f.islower())
 
         def set_offset_timestamp(self, offset_timestamp):
             self.offset_timestamp = offset_timestamp
@@ -399,26 +390,30 @@ class Parser:
             return ts
 
         def __str__(self):
+            enc_stub = not self.ovr and self.enc
             try:
                 rule = self.parser.db.get_rule(self.uid, self.rid)
                 if rule is None:
-                    msg = f'unknown rid: 0x{self.rid:04x}'
+                    msg = '<encrypted line>' if enc_stub else f'unknown rid: 0x{self.rid:04x}'
                     level = ''
                     src = ''
                 else:
                     string, src = rule[:2]
                     level = rule[2] if len(rule) > 2 else ''
 
-                    s = Sprintf(string)
-                    if self._field_c:
-                        s.unpack_buf(self.payload)
-                        cb = getattr(log_rules, rule[3], None) if len(rule) > 3 else None
-                        msg = s.tostring_cb(cb, self)
+                    if enc_stub:
+                        msg = '<encrypted line>'
                     else:
-                        err = s.unpack_buf(self.payload)
-                        if err:
-                            raise err
-                        msg = s.tostring_fast()
+                        s = Sprintf(string)
+                        if self.parser.field_c:
+                            s.unpack_buf(self.payload)
+                            cb = getattr(log_rules, rule[3], None) if len(rule) > 3 else None
+                            msg = s.tostring_cb(cb, self)
+                        else:
+                            err = s.unpack_buf(self.payload)
+                            if err:
+                                raise err
+                            msg = s.tostring_fast()
 
             # except (AttributeError, KeyError, IndexError) as e:
             except Exception as e:
@@ -427,41 +422,43 @@ class Parser:
                 src = ''
 
             fields = []
-            if self._field_p:
+            if self.parser.field_p:
                 f_pos = f'0x{self.pos:06x}'
                 fields.append(f_pos)
-            if self._field_a:
+            if self.parser.field_a:
                 f_det = '!' if self.det else ' '
                 fields.append(f_det)
-            if self._field_v:
+            if self.parser.field_v:
                 f_ver = f'{self.ver[0] if self.ver is not None else "?.?":>7}'
                 fields.append(f_ver)
-            if self._field_u:
+            if self.parser.field_u:
                 f_uid = f'{uid2str(self.uid):32}'
                 fields.append(f_uid)
-            if self._field_t:
-                f_abs_ts = self.timestamp
+            if self.parser.field_t:
+                f_abs_ts = '      <encrypted time> :' if enc_stub else self.timestamp
                 fields.append(f_abs_ts)
-            if self._field_r:
+            if self.parser.field_r:
                 f_rid = f'0x{self.rid:04x}'
                 fields.append(f_rid)
-            if self._field_l:
+            if self.parser.field_l:
                 f_level = f'{level:>12}:' if level else ' ' * 13
                 fields.append(f_level)
-            if self._field_s:
+            if self.parser.field_s:
                 f_src = f'{src:>20}:' if src else ' ' * 21
                 fields.append(f_src)
-            if self._field_m:
-                f_msg = f'{msg:100}' if self._field_d else msg
+            if self.parser.field_m:
+                f_msg = f'{msg:100}' if self.parser.field_d else msg
                 fields.append(f_msg)
-            if self._field_d:
+            if self.parser.field_d:
                 f_dump = dump(self.data, 112, [2, 2, 6])
                 fields.append(f_dump)
 
             return ' '.join(fields)
 
     def __init__(self, content, custom_uid_list=None):
-        self.Line31.set_fields()        # Исходное состояние
+        self.field_b = self.field_p = self.field_a = self.field_v = self.field_u = self.field_t = False
+        self.field_r = self.field_l = self.field_s = self.field_m = self.field_d = self.field_c = False
+        self.set_fields(self.INIT_FIELDS)    # Исходное состояние
         self.db = DB()
         self.errors = []
         self.invalid = False
@@ -479,7 +476,11 @@ class Parser:
         self.errors.append(message)
 
     def set_fields(self, fields):
-        self.Line31.set_fields(fields)
+        for f in fields:
+            setattr(self, f'field_{f.lower()}', f.islower())
+
+    def field(self, field):
+        return getattr(self, f'field_{field.lower()}')
 
     def __store_chunk(self):
         if self.__last_chunk:
@@ -605,8 +606,12 @@ class Parser:
         def add_block(_uid):
             # Отсортировать встреченные версии по убыванию. Самая старшая вероятно и будет версией прошивки
             if pre_uid_lines:
+                # ts field encryption check
+                test = pre_uid_lines[:64]
+                encrypted = (sum(((test[i].ts >> 24) != (test[i - 1].ts >> 24) for i in range(1, len(test)))) /
+                             len(test) > 0.4)
                 versions = tuple(sorted(seen_ver, reverse=True))
-                blocks.append({'uid': _uid, 'versions': versions, 'lines': pre_uid_lines})
+                blocks.append({'uid': _uid, 'versions': versions, 'lines': pre_uid_lines, 'enc': encrypted})
 
         def tup2ver(_ver):
             return f'{_ver[0]}.{_ver[1]}.{_ver[2]}', f'{_ver[3]}' if _ver[-1] == 'public' else f'{_ver[3]}({_ver[4]})'
@@ -649,6 +654,7 @@ class Parser:
         # Попытаемся подобрать uid, для неопределённых блоков
         for b in blocks:
             uid = b['uid']
+            enc = b['enc']
             # Иногда встречаются логи, которые начинаются с RID_CHANGEUID с пустым uid.
             # Игнорируем автоопределение для таких строк.
             det = uid is None and not all(line.rid in DB.services_rid for line in b['lines'])
@@ -709,11 +715,13 @@ class Parser:
                     ver_list = vv
 
             # определены пользовательские uid, их и используем
+            ovr = False
             if _custom_uid_list:
                 u = _custom_uid_list.pop(0)
                 if u not in ('', '-') and uid != u:
                     uid = u
                     det = True
+                    ovr = True
                     vv = self.db.ver_list(uid)
                     if vv:
                         ver = vv[0]
@@ -723,6 +731,7 @@ class Parser:
                 'det': det,             # возможно, uid определён неточно
                 'uid': uid,             # какой uid будет использован
                 'ver': ver,             # точная версия прошивки
+                'enc': enc,             # зашифрован
                 'uid_list': uid_list,   # возможные uid, если определитель сработал неверно
                 'ver_list': ver_list    # возможные версии прошивки
             })
@@ -731,11 +740,14 @@ class Parser:
                 line.uid = uid
                 line.ver = ver
                 line.det = det
+                line.ovr = ovr
+                line.enc = enc
 
 
 def get_args():
-    default = Parser.Line31.INIT_FIELDS
+    default = Parser.INIT_FIELDS
     desc = {
+        'b': ('Показать шапку с информацией', 'Скрыть шапку'),
         'a': ('Показать метку автоопределения. Автоматически, если не указан ключ -A ', 'Скрыть метку'),
         'v': ('Показать версию', 'Скрыть версию'),
         'u': ('Показать uid', 'Скрыть uid'),
@@ -829,7 +841,7 @@ def main():
         if args.fields:
             parser.set_fields(args.fields)
 
-        if parser.errors:
+        if parser.errors and parser.field_b:
             print(*parser.errors, sep='\n')
 
         if parser.log:
@@ -839,17 +851,21 @@ def main():
             missing_uid = parser.db.required(seen_uid)
 
             # Если есть детектируемые версии, то выведем подробный список версий
+            banner = []
             if det:
-                if 'A' not in args.fields:
-                    print(f'Строки, помеченные "!", возможно, раскодированы неверно')
+                if parser.field_a:
+                    banner.append(f'Строки, помеченные "!", возможно, раскодированы неверно')
                 for v in parser.seen_ver:
                     mark = '!' if v['det'] else ' '
                     ver = f"{v['ver'][0]}.{v['ver'][1]}" if v['ver'] is not None else '?.?.?'
                     uid = uid2str(v['uid'])
                     m = ' - нет в базе!' if v['uid'] in missing_uid else ' '*14 if missing_uid else ''
                     ver_list = [f'{v[0]}.{v[1]}' for v in v['ver_list']]
-                    print(f"{mark} будет использован uid: {uid:>32}{m}  Версия: {ver:13}  "
-                          f"Возможные uid, ver: {v['uid_list']}, {ver_list}")
+                    if v['enc']:
+                        banner.append(f"! зашифровано       uid: {uid:>32}{m}  Версия: {ver:13}")
+                    else:
+                        banner.append(f"{mark} будет использован uid: {uid:>32}{m}  Версия: {ver:13}  "
+                                      f"Возможные uid, ver: {v['uid_list']}, {ver_list}")
             else:
                 for u in missing_uid:
                     vv = parser.db.ver_list(u)
@@ -860,7 +876,10 @@ def main():
                         ver_list = [s['ver_list'] for s in parser.seen_ver if s['uid'] == u][0]
                         ver_list = [f'{v[0]}.{v[1]}' for v in ver_list]
                         add_info = f'  Возможные ver: {ver_list}'
-                    print(f'Отсутствует база для версии {uid2str(u)} [{ver}]{add_info}')
+                    banner.append(f'Отсутствует база для версии {uid2str(u)} [{ver}]{add_info}')
+
+            if banner and parser.field_b:
+                print(*banner, sep='\n')
 
         last_ts = None
         for line in parser.log:
