@@ -1,4 +1,5 @@
 import argparse
+import importlib.util
 import pathlib
 import sys
 import zipfile
@@ -11,10 +12,29 @@ import zlib
 from itertools import zip_longest
 from types import SimpleNamespace
 
-import log_rules
+import log_db
+
+
+try:
+    decrypt_mod = importlib.import_module('decrypt')
+except ImportError:
+    decrypt_mod = None
+
+
+def get_decrypt_proc(name):
+    return getattr(decrypt_mod, name, None) or getattr(log_db, name, None)
+
+
+decrypt_test = get_decrypt_proc('decrypt_test')
+
+
+def decrypt_no(line):
+    line.ts = struct.unpack('<I', line.data[2:6])[0]
+    line.payload = line.data[6:]
+
 
 # crc8, poly = 0x07, init = 0xFF, ref_in = False, ref_out = False, xor_out = 0x00
-crc_table = [
+crc_table = (
     0x00, 0x07, 0x0e, 0x09, 0x1c, 0x1b, 0x12, 0x15, 0x38, 0x3f, 0x36, 0x31, 0x24, 0x23, 0x2a, 0x2d,
     0x70, 0x77, 0x7e, 0x79, 0x6c, 0x6b, 0x62, 0x65, 0x48, 0x4f, 0x46, 0x41, 0x54, 0x53, 0x5a, 0x5d,
     0xe0, 0xe7, 0xee, 0xe9, 0xfc, 0xfb, 0xf2, 0xf5, 0xd8, 0xdf, 0xd6, 0xd1, 0xc4, 0xc3, 0xca, 0xcd,
@@ -31,7 +51,7 @@ crc_table = [
     0x3e, 0x39, 0x30, 0x37, 0x22, 0x25, 0x2c, 0x2b, 0x06, 0x01, 0x08, 0x0f, 0x1a, 0x1d, 0x14, 0x13,
     0xae, 0xa9, 0xa0, 0xa7, 0xb2, 0xb5, 0xbc, 0xbb, 0x96, 0x91, 0x98, 0x9f, 0x8a, 0x8d, 0x84, 0x83,
     0xde, 0xd9, 0xd0, 0xd7, 0xc2, 0xc5, 0xcc, 0xcb, 0xe6, 0xe1, 0xe8, 0xef, 0xfa, 0xfd, 0xf4, 0xf3
-]
+)
 
 
 def crc8(data):
@@ -74,6 +94,10 @@ def dump(b, width=64, split=None, show_ascii=True):
 
 def uid2str(uid):
     return uid if uid is not None else '<unknown>'
+
+
+def get_opt_field(t: tuple, idx: int, default=None):
+    return t[idx] if t and idx < len(t) else default
 
 
 class Sprintf:
@@ -215,11 +239,10 @@ class DB:
     RID_TIMESTAMP = 0xfe01
 
     db_common = {
-        RID_CHANGEUID: ('previous uid: %.32s', 'UID', ''),
+        RID_CHANGEUID: ('Предыдущий UID: %.32s', 'UID', 'UID_CHANGE'),
         RID_TIMESTAMP: ('Временная метка %d сек от 2012.01.01', 'TIME', 'TIME_UTC'),
     }
 
-    # какие rid игнорировать при выводе с разделением по времени
     services_rid = (
         RID_CHANGEUID,
         RID_TIMESTAMP
@@ -227,23 +250,29 @@ class DB:
 
     db = {}
 
+    RF_FMT = 0
+    RF_SRC = 1
+    RF_LEV_OPT = 2
+    RF_CBK_OPT = 3
+    RF_FLG_OPT = 4
+
     @staticmethod
     def check_db_ver():
-        return hasattr(log_rules, 'db_ver') and log_rules.db_ver == 4
+        return hasattr(log_db, 'db_ver') and log_db.db_ver == 4
 
     @staticmethod
     def _get_rul_indexes(uid):
         if uid not in DB.db:
             DB.db[uid] = None
-            if uid in log_rules.db:
-                ver, *ss = log_rules.db[uid]
+            if uid in log_db.db:
+                ver, *ss = log_db.db[uid]
                 if ss:
                     subst_uid = None
                     if len(ss[0]) == 32:
                         subst_uid = ss[0]
                         if subst_uid not in DB.db:
-                            if subst_uid in log_rules.db:
-                                _, *ss = log_rules.db[subst_uid]
+                            if subst_uid in log_db.db:
+                                _, *ss = log_db.db[subst_uid]
                                 if not ss:
                                     return None
                             else:
@@ -275,7 +304,7 @@ class DB:
             if rul_indexes:
                 if rid < len(rul_indexes):
                     idx = rul_indexes[rid]
-                    return log_rules.rul[idx]
+                    return log_db.rul[idx]
 
         # Берём из common
         return DB.db_common.get(rid, None)
@@ -286,7 +315,7 @@ class DB:
         Список всех версий в базе
         """
         versions = list()
-        for r in log_rules.db.values():
+        for r in log_db.db.values():
             if len(r) > 1:
                 versions.extend([v[0] for v in r[0] if v[0] not in versions])
         return versions
@@ -296,14 +325,14 @@ class DB:
         """
         Список всех версий, подходящих по uid или [], если не найдено
         """
-        return log_rules.db[uid][0] if uid in log_rules.db else []
+        return log_db.db[uid][0] if uid in log_db.db else []
 
     @staticmethod
     def uid_list(ver):
         """
         Список всех uid, подходящих по версии или [], если не найдено
         """
-        return [uid for uid, r in log_rules.db.items() if ver in r[0]]
+        return [uid for uid, r in log_db.db.items() if ver in r[0]]
 
     def required(self, uid_list):
         """
@@ -312,9 +341,123 @@ class DB:
         """
         return [uid for uid in uid_list if not self._get_rul_indexes(uid)]
 
+    @staticmethod
+    def get_decrypt(uid):
+        """
+        Вернёт ф-ию расшифровки или None, если не найдена
+        """
+        for _ in range(2):
+            if uid not in log_db.db:
+                # нет в базе или uid is None
+                return None
+            r = log_db.db[uid]
+            if len(r) > 2:
+                # Указана ф-ия расшифровки
+                return get_decrypt_proc(r[2])
+            if len(r) < 2:
+                # В базе только заглушка - версия
+                return None
+            if len(r[1]) != 32:
+                # Не шифровано
+                return decrypt_no
+            uid = r[1]
+        return None
+
 
 class Parser:
     INIT_FIELDS = "bPAVUtRLsmDc"    # Исходное состояние
+
+    class Block:
+        __pattern_ver = re.compile(br'([12])\.(\d+)\.(\d+)\.(\d+)\((\w+)\)')    # выбираем только версии [1-2].x.x
+        # __pattern_uid = re.compile(br'([0-9a-f]{32})')
+
+        def __init__(self):
+            self.lines = []
+            self.uid = None         # какой uid будет использован
+            self.ver = None         # точная версия прошивки
+            self.det = False        # происходит подбор версии, возможно, uid будет определён неточно
+            self.ovr = False        # uid переопределён вручную
+            self.enc = False        # зашифрован
+            self.uid_list = []      # возможные uid, если определитель сработал неверно
+            self.ver_list = []      # возможные версии прошивки
+            self.decrypt = None     # процедура распаковки/расшифровки
+            self.seen_ver = None    # встреченные версии, для автоопределения
+
+        def append(self, line):
+            line.block = self
+            self.lines.append(line)
+
+        def check_version(self):
+            """
+            Попытаемся определить версию блока
+            """
+            # uid может быть не определён
+            if self.decrypt is None:
+                # Ф-ия расшифровки ещё не определена.
+                # Если предположительно шифрован, то попытаемся расшифровать тестовой ф-ией,
+                # если нет, то просто разбор полей
+                # После определения uid будет присвоена верная ф-ия расшифровки
+                if self.enc:
+                    if decrypt_test is None:
+                        # Нечем расшифровывать блок, пропускаем
+                        return
+                    self.decrypt = decrypt_test
+                else:
+                    self.decrypt = decrypt_no
+
+            seen_ver = set()
+            # seen_uid = set()
+            ignore = []     # для ускорения, чтобы не распаковывать ненужные строки
+            # Хоть в дальнейшем и понадобится распаковывать все (или почти все) строки,
+            # но uid может быть не определён и раскодированный результат может отличаться
+            for line in self.lines:
+                if line.rid not in ignore:
+                    line.prep()
+                    if line.payload is not None:
+                        if line.payload[:7] == b'\xc2\xe5\xf0\xf1\xe8\xff\x20':  # "Версия "
+                            if line.payload[7:10] == b'\xcf\xce\x00':  # "ПО\0"
+                                # могут попадаться версии и основной прошивки и загрузчика и вообще чего угодно
+                                if res := self.__pattern_ver.match(line.payload[10:]):
+                                    seen_ver.add((res.groups(), line.rid))  # сохраним версию и rid
+                        else:
+                            # if res := self.__pattern_uid.match(line.payload):
+                            #     seen_uid.add(res.group())
+                            # else:
+                            #     ignore.append(line.rid)
+
+                            ignore.append(line.rid)
+
+            # Отсортировать встреченные версии по убыванию. Самая старшая, вероятно, и будет версией прошивки
+            self.seen_ver = tuple(sorted(seen_ver, reverse=True))
+            # self.seen_uid = tuple(seen_uid)
+
+        def set_uid(self, new_uid):
+            """
+            Присвоить блоку новый uid
+            :param new_uid: новый uid
+            """
+            self.uid = new_uid
+            new_decrypt = DB.get_decrypt(new_uid)
+            if self.decrypt != new_decrypt:
+                if self.decrypt:
+                    # ф-ия расшифровки изменилась, нужно удалить то что уже расшифровали старой ф-ией
+                    for line in self.lines:
+                        line.reset()
+                self.decrypt = new_decrypt
+
+        def complete(self, block_uid, blocks):
+            if self.lines:
+                # check encryption by ts field (5 is hi byte of time field)
+                test = self.lines[:64]
+                self.enc = sum(test[i].data[5] != test[i-1].data[5] for i in range(1, len(test))) / len(test) > 0.4
+
+                self.set_uid(block_uid)
+                blocks.append(self)
+
+        @staticmethod
+        def tup2ver(v: tuple):
+            v = tuple(map(lambda s: s.decode('cp1251', errors='ignore'), v))
+            return f'{v[0]}.{v[1]}.{v[2]}', f'{v[3]}' if v[-1] == 'public' else f'{v[3]}({v[4]})'
 
     class LineCommon:
         def __init__(self, parser: 'Parser', hdr, pos, data):
@@ -332,11 +475,12 @@ class Parser:
             if self.uid == '':
                 self.uid = None
             else:
-                if parser.uid is None:
-                    parser.uid = self.uid
+                if parser.last_uid is None:
+                    parser.last_uid = self.uid
                 else:
-                    if parser.uid != self.uid:
-                        self.parser.error(f'! uid {self.uid} different from what has been seen before {parser.uid}')
+                    if parser.last_uid != self.uid:
+                        self.parser.error(
+                            f'! uid {self.uid} different from what has been seen before {parser.last_uid}')
 
         def __str__(self):
             comment = f'! uid: 0x{self.pos:06x} 0x{self.hdr:02x}'
@@ -358,56 +502,87 @@ class Parser:
             return f'{comment:42}{text}'
 
     class Line31(LineCommon):
+        # значение времени строки лога - миллисекунды от метки времени
+        # значение в метке времени - секунды от 2012-01-01 00:00:00.000
         BASE_TIME = 1325376000000   # 2012-01-01 00:00:00.000
         TAB_POS = {'p': 9, 'a': 2, 'v': 8, 'u': 33, 't': 25, 'r': 7, 'l': 14, 's': 22}
 
         def __init__(self, parser, hdr, pos, data):
             super().__init__(parser, hdr, pos, data)
-            # записи лога считаются в миллисекундах от временных меток
-            # временные метки в логах хранятся в секундах от 2012-01-01 00:00:00.000
-            self.abs_ts = 0
-            self.offset_timestamp = 0
-            self.uid = None
-            self.ver = None
-            self.det = False
-            self.ovr = False
-            self.enc = False
-            self.rid, self.ts = struct.unpack('<HI', data[:6])
-            self.payload = data[6:]
-            self.set_offset_timestamp(0)
+            self.block = None
+            self.ts = 0             # относительное время строки в ms, или 0 если строка ещё не расшифрована
+            self.offset_ts = 0      # время из последней метки времени в ms, или None, если метки ещё не было
+            self.payload = None     # расшифрованные данные строки, или None, если строка ещё не расшифрована
+            self.rid = struct.unpack('<H', data[:2])[0]
+            self.rul = None
 
-        def set_offset_timestamp(self, offset_timestamp):
-            self.offset_timestamp = offset_timestamp
-            self.abs_ts = self.ts + self.offset_timestamp + self.BASE_TIME
+        def reset(self):
+            """
+            Удалить расшифрованные данные
+            """
+            self.ts = 0
+            self.payload = None
+
+        def prep(self):
+            """
+            Расшифровать строку
+            """
+            if self.payload is not None:
+                return
+            if self.block.decrypt:
+                self.block.decrypt(self)
+            else:
+                if not self.block.enc:
+                    decrypt_no(self)
 
         @property
-        def timestamp(self):
-            sec = self.abs_ts // 1000
-            ms = self.abs_ts % 1000
+        def abs_ts(self):
+            """
+            Абсолютное время строки в epoch ms. Или None, если временной метки ещё не было
+            """
+            return self.offset_ts + self.ts + self.BASE_TIME if self.offset_ts is not None else None
+
+        @property
+        def time(self):
+            """
+            Текстовое представление времени строки в виде "[dd-mm-yyyy] hh-mm-ss"
+            Дата может отсутствовать, если не определена. Тогда время - смещение от неопределённого момента
+            """
+            abs_ts = self.abs_ts
+            is_abs = abs_ts is not None
+            t = abs_ts if is_abs else self.ts
+            sec = t // 1000
+            ms = t % 1000
             # так немного быстрее, чем time.strftime
             t = time.gmtime(sec)
-            ts = f'{t.tm_mday:02}.{t.tm_mon:02}.{t.tm_year:04} {t.tm_hour:02}-{t.tm_min:02}-{t.tm_sec:02}-{ms:03}:'
+            d = f'{t.tm_mday:02}.{t.tm_mon:02}.{t.tm_year:04} ' if is_abs else '           '
+            ts = f'{d}{t.tm_hour:02}-{t.tm_min:02}-{t.tm_sec:02}-{ms:03}'
             return ts
 
         def __str__(self):
-            enc_stub = not self.ovr and self.enc
+            # Для корректного отображение строка должна быть предварительно раскодирована prep()
+            # При штатной выборке через Parser.log это произойдёт автоматически
+
+            enc_stub = self.payload is None and self.rid != DB.RID_CHANGEUID
             try:
-                rule = self.parser.db.get_rule(self.uid, self.rid)
-                if rule is None:
-                    msg = '<encrypted line>' if enc_stub else f'unknown rid: 0x{self.rid:04x}'
+                if self.rul is None:
+                    msg = '<encrypted line>' if enc_stub else f'unknown <0x{self.rid:04x}>'
                     level = ''
                     src = ''
                 else:
-                    string, src = rule[:2]
-                    level = rule[2] if len(rule) > 2 else ''
+                    fmt = self.rul[DB.RF_FMT]
+                    src = self.rul[DB.RF_SRC]
+                    level = get_opt_field(self.rul, DB.RF_LEV_OPT)
 
                     if enc_stub:
                         msg = '<encrypted line>'
+
                     else:
-                        s = Sprintf(string)
+                        s = Sprintf(fmt)
                         if self.parser.field_c:
                             s.unpack_buf(self.payload)
-                            cb = getattr(log_rules, rule[3], None) if len(rule) > 3 else None
+                            cbk = get_opt_field(self.rul, DB.RF_CBK_OPT)
+                            cb = None if cbk is None else getattr(log_db, cbk, None)
                             msg = s.tostring_cb(cb, self)
                         else:
                             err = s.unpack_buf(self.payload)
@@ -426,17 +601,18 @@ class Parser:
                 f_pos = f'0x{self.pos:06x}'
                 fields.append(f_pos)
             if self.parser.field_a:
-                f_det = '!' if self.det else ' '
+                f_det = '!' if self.block.det else ' '
                 fields.append(f_det)
             if self.parser.field_v:
-                f_ver = f'{self.ver[0] if self.ver is not None else "?.?":>7}'
+                f_ver = f'{self.block.ver[0] if self.block.ver is not None else "?.?":>7}'
                 fields.append(f_ver)
             if self.parser.field_u:
-                f_uid = f'{uid2str(self.uid):32}'
+                f_uid = f'{uid2str(self.block.uid):32}'
                 fields.append(f_uid)
             if self.parser.field_t:
-                f_abs_ts = '      <encrypted time> :' if enc_stub else self.timestamp
-                fields.append(f_abs_ts)
+                f_time = '<encrypted time> ' if enc_stub else self.time
+                f_time = f'{f_time:>23}:'
+                fields.append(f_time)
             if self.parser.field_r:
                 f_rid = f'0x{self.rid:04x}'
                 fields.append(f_rid)
@@ -450,7 +626,13 @@ class Parser:
                 f_msg = f'{msg:100}' if self.parser.field_d else msg
                 fields.append(f_msg)
             if self.parser.field_d:
-                f_dump = dump(self.data, 112, [2, 2, 6])
+                if self.payload:
+                    f_dump = (struct.pack('<H', self.rid).hex() + ' ' +
+                              struct.pack('<I', self.ts).hex() + ' ' +
+                              dump(self.payload, 112, []))
+                else:
+                    f_dump = dump(self.data, 112, [2, 2, 6])
+
                 fields.append(f_dump)
 
             return ' '.join(fields)
@@ -458,19 +640,32 @@ class Parser:
     def __init__(self, content, custom_uid_list=None):
         self.field_b = self.field_p = self.field_a = self.field_v = self.field_u = self.field_t = False
         self.field_r = self.field_l = self.field_s = self.field_m = self.field_d = self.field_c = False
-        self.set_fields(self.INIT_FIELDS)    # Исходное состояние
+        self.field_1 = True
+        self.set_fields(self.INIT_FIELDS)   # Исходное состояние
         self.db = DB()
         self.errors = []
         self.invalid = False
-        self._parse_errors = 0
-        self.log = []
-        self.seen_ver = []              # какие версии встретились
+        self.__parse_errors = 0
+        self.blocks: list[Parser.Block] = []
+        self._log: list[Parser.Line31] = []
         self.line32 = None
-        self.uid = None                 # uid прошивки, или последних записей, если в логе несколько версий
+        self.last_uid = None                # uid прошивки, или последних записей, если в логе несколько версий
         self.__packet_pos = 0
         self.__last_chunk = bytearray()
         self.parse_log_file(content)
         self.preprocess(custom_uid_list)
+
+    @property
+    def empty(self):
+        return not self._log
+
+    @property
+    def log(self):
+        for line in self._log:
+            if get_opt_field(line.rul, DB.RF_FLG_OPT, 0) & 1 == 1 and self.field_1:
+                continue
+            line.prep()
+            yield line
 
     def error(self, message):
         self.errors.append(message)
@@ -484,7 +679,7 @@ class Parser:
 
     def __store_chunk(self):
         if self.__last_chunk:
-            self.log.append(self.Line31(self, 0x31, self.__packet_pos, self.__last_chunk))
+            self._log.append(self.Line31(self, 0x31, self.__packet_pos, self.__last_chunk))
             self.__last_chunk.clear()
 
     def __add_packet(self, packet_pos, packet_hdr, packet):
@@ -555,8 +750,8 @@ class Parser:
                     pass
                 else:
                     self.error(f'! unexpected byte 0x{byte:02x} @ 0x{position:06x}')
-                    self._parse_errors += 1
-                    self.invalid = self._parse_errors > 35
+                    self.__parse_errors += 1
+                    self.invalid = self.__parse_errors > 35
                     if self.invalid:
                         self.error(f'! Слишком много ошибок. Вероятно это не лог')
                         break
@@ -594,87 +789,82 @@ class Parser:
             position += 1
         self.__complete()
 
-    # Посчитать абсолютное время события и определиться с версией
     def preprocess(self, custom_uid_list):
-        _custom_uid_list = custom_uid_list.copy() if custom_uid_list is not None else None
-        pattern_ver = re.compile(br'(\d+)\.(\d+)\.(\d+)\.(\d+)\((\w+)\)')
-        pre_uid_lines = []
-        seen_ver = set()
-        blocks = []
-        last_offset_timestamp = 0
+        """
+        Предварительная обработка лога:
+         - определяет версию
+         - считает абсолютное время
+        :param custom_uid_list: использовать эти uid для раскодирования
+        """
+        # На этом этапе
+        # Версия не определена.
+        # Шифрование не определено.
+        # Абсолютное время не определено.
 
-        def add_block(_uid):
-            # Отсортировать встреченные версии по убыванию. Самая старшая вероятно и будет версией прошивки
-            if pre_uid_lines:
-                # ts field encryption check
-                test = pre_uid_lines[:64]
-                encrypted = (sum(((test[i].ts >> 24) != (test[i - 1].ts >> 24) for i in range(1, len(test)))) /
-                             len(test) > 0.4)
-                versions = tuple(sorted(seen_ver, reverse=True))
-                blocks.append({'uid': _uid, 'versions': versions, 'lines': pre_uid_lines, 'enc': encrypted})
+        _custom_uid_list = custom_uid_list[:] if custom_uid_list is not None else None
 
-        def tup2ver(_ver):
-            return f'{_ver[0]}.{_ver[1]}.{_ver[2]}', f'{_ver[3]}' if _ver[-1] == 'public' else f'{_ver[3]}({_ver[4]})'
-
-        for line in self.log:
-            pre_uid_lines.append(line)
-
-            if line.rid == self.db.RID_TIMESTAMP:
+        # Разбиваем лог на блоки по uid и определяем шифрован он или нет
+        block = self.Block()
+        for line in self._log:
+            block.append(line)
+            if line.rid == self.db.RID_CHANGEUID:
+                decrypt_no(line)
                 rule = self.db.get_rule(None, line.rid)
                 if rule is not None:
-                    # s = Sprintf(rule[0])
-                    # s.unpack_buf(line.payload)
-                    # i1 = s.args[0]
-                    i1 = struct.unpack('<I', line.payload[:4])[0]
-                    last_offset_timestamp = 1000 * (i1 - line.ts // 1000)
-
-            elif line.rid == self.db.RID_CHANGEUID:
-                rule = self.db.get_rule(None, line.rid)
-                if rule is not None:
-                    s = Sprintf(rule[0])
+                    s = Sprintf(rule[DB.RF_FMT])
                     s.unpack_buf(line.payload)
                     uid = s.args[0]
                     # Попадались пакеты, когда UID заканчивался не /0. Поэтому может быть это и не %s, а %.32s
                     # если был /0, то оставляем неопределённый uid
-                    add_block(None if uid == '' else s.args[0])
-                    pre_uid_lines = []
-                    seen_ver = set()
+                    block.complete(None if uid == '' else uid, self.blocks)
+                    block = self.Block()
 
-            elif line.payload[:10] == b'\xc2\xe5\xf0\xf1\xe8\xff\x20\xcf\xce\x00':  # "Версия ПО\0"
-                # могут попадаться версии и основной прошивки и загрузчика и вообще чего угодно
-                res = pattern_ver.match(line.payload[10:])
-                if res:
-                    seen_ver.add(tuple(v.decode('cp1251', errors='ignore') for v in res.groups()))
+        block.complete(self.last_uid, self.blocks)
 
-            # скорректировать время по последней метке
-            line.set_offset_timestamp(last_offset_timestamp)
-
-        add_block(self.uid)
-
-        # Попытаемся подобрать uid, для неопределённых блоков
-        for b in blocks:
-            uid = b['uid']
-            enc = b['enc']
+        # Требуется ли подбор uid
+        for b in self.blocks:
             # Иногда встречаются логи, которые начинаются с RID_CHANGEUID с пустым uid.
             # Игнорируем автоопределение для таких строк.
-            det = uid is None and not all(line.rid in DB.services_rid for line in b['lines'])
+
+            # Запускаем подбор версии, когда uid нет в базе, но можно попытаться узнать версию из лога
+            b.det = not self.db.ver_list(b.uid) and not all(line.rid in DB.services_rid for line in b.lines)
+
+        # Если есть неопределённые блоки, то нужно просканировать определённые,
+        # для сбора информации для сравнения с неопределёнными
+        # Если всё определено, то сканировать не нужно
+        if any(b.det for b in self.blocks):
+            for b in self.blocks:
+                b.check_version()
+
+        # Попытаемся подобрать uid, для неопределённых блоков и/или переопределить, если было указано явно
+        for b in self.blocks:
+            uid = b.uid
             ver = None
             uid_list = []
             ver_list = []
-            # приведём в читаемый вид, исключая "0.0.0.0" и удаляя "(public)"
-            for v in b['versions']:
-                if not all(map(lambda n: n == '0', v[:4])):
-                    ver_list.append(tup2ver(v))
+            if b.seen_ver:
+                for v in b.seen_ver:
+                    ver_list.append(b.tup2ver(v[0]))
 
-            if det:
+            if b.det:
                 # uid не определён, пытаемся подобрать из версии
-                if b['versions']:
+                if b.seen_ver:
                     # Определяем по встреченным аналогичным блокам
-                    uu1 = [g['uid'] for g in blocks if g['uid'] is not None and g['versions'] == b['versions']]
+                    uu1 = []
+                    for g in self.blocks:
+                        if not g.det and g.seen_ver and g.seen_ver[0] == b.seen_ver[0] and g.uid not in uu1:
+                            uu1.append(g.uid)
 
                     # Определяем по встреченной версии
-                    v2 = tup2ver(b['versions'][0])
+                    v2 = b.tup2ver(b.seen_ver[0][0])
                     uu2 = self.db.uid_list(v2)
+                    # исключить из uu2 лишние, не совпадающие по rid
+                    for u in uu2[:]:
+                        r = self.db.get_rule(u, b.seen_ver[0][1])
+                        if r and r[DB.RF_SRC] == 'VERSION':
+                            pass
+                        else:
+                            uu2.remove(u)
 
                     uu = set(uu1) & set(uu2)
                     if len(uu) == 1:
@@ -686,7 +876,7 @@ class Parser:
                         uid = uu2[0]
                         ver = v2
 
-                    uid_list.extend(uu1)
+                    uid_list.extend(set(uu1))
                     uid_list.extend([uid for uid in uu2 if uid not in uid_list])
 
                 else:
@@ -715,33 +905,40 @@ class Parser:
                     ver_list = vv
 
             # определены пользовательские uid, их и используем
-            ovr = False
             if _custom_uid_list:
                 u = _custom_uid_list.pop(0)
                 if u not in ('', '-') and uid != u:
                     uid = u
-                    det = True
-                    ovr = True
+                    b.det = True
+                    b.ovr = True
                     vv = self.db.ver_list(uid)
                     if vv:
                         ver = vv[0]
-                    # ver_list.extend([v for v in vv if v not in ver_list])
 
-            self.seen_ver.append({
-                'det': det,             # возможно, uid определён неточно
-                'uid': uid,             # какой uid будет использован
-                'ver': ver,             # точная версия прошивки
-                'enc': enc,             # зашифрован
-                'uid_list': uid_list,   # возможные uid, если определитель сработал неверно
-                'ver_list': ver_list    # возможные версии прошивки
-            })
+            b.ver = ver
+            b.set_uid(uid)
+            b.uid_list = uid_list
+            b.ver_list = ver_list
 
-            for line in b['lines']:
-                line.uid = uid
-                line.ver = ver
-                line.det = det
-                line.ovr = ovr
-                line.enc = enc
+        # Вычисляем абсолютное время, т.к. уже знаем как расшифровывать строку, если это необходимо
+        last_offset_timestamp = None        # not yet stated
+        for line in self._log:
+            line.rul = self.db.get_rule(line.block.uid, line.rid)
+
+            if line.rid == self.db.RID_TIMESTAMP:
+                # нужно раскодировать
+                line.prep()
+                if line.payload:
+                    rule = self.db.get_rule(None, line.rid)
+                    s = Sprintf(rule[0])
+                    s.unpack_buf(line.payload)
+                    i1 = s.args[0]
+                    # i1 = struct.unpack('<I', line.payload[:4])[0]
+                    last_offset_timestamp = 1000 * (i1 - line.ts // 1000)
+                else:
+                    last_offset_timestamp = None
+
+            line.offset_ts = last_offset_timestamp
 
 
 def get_args():
@@ -779,6 +976,7 @@ def get_args():
         h = '* ' if up in default and lo in desc else ''
         g.add_argument(f'-{up}', dest='fields', action='append_const', const=up,
                        help=h+desc[lo][1] if lo in desc else None)
+    parser.add_argument(f'-1', dest='fields', action='append_const', const='1')
     parser.add_argument('--split', default=None, type=int,
                         help='Разбивать вывод, если время между записями превысит заданное значение, ms')
     parser.add_argument('--uid', default=None, type=str, dest='uid', nargs='+',
@@ -789,7 +987,7 @@ def get_args():
     return args
 
 
-def get_log_content(filename):
+def get_log_content(filename) -> None | bytes:
     p = pathlib.Path(filename)
     if not p.is_file():
         print('Файл не найден')
@@ -800,13 +998,19 @@ def get_log_content(filename):
         except zipfile.BadZipFile:
             print('Архив повреждён')
             return None
-        log_filename = next(iter((fn for fn in z.namelist() if pathlib.Path(fn).suffix.lower() == '.log')), None)
-        if log_filename:
-            content = z.read(log_filename)
-            z.close()
-            return content
         else:
-            print('Архив не содержит файлов .log')
+            with z:
+                log_files = [fn for fn in z.namelist() if pathlib.Path(fn).suffix.lower() == '.log']
+                if not log_files:
+                    print('В архиве нет .log файла')
+                else:
+                    log_file = log_files[0]
+                    if len(log_files) > 1:
+                        print(f'Архив содержит несколько файлов .log, будет обработан только "{log_file}"')
+                    try:
+                        return z.read(log_file)
+                    except (zlib.error, zipfile.BadZipFile):
+                        print(f'Не удалось распаковать "{log_file}"')
             return None
     else:
         return p.open('rb').read()
@@ -835,7 +1039,8 @@ def main():
     if content:
         parser = Parser(content, args.uid)
 
-        det = any(v['det'] for v in parser.seen_ver)
+        det = any(b.det for b in parser.blocks)
+        cry = any(b.enc and b.decrypt is None for b in parser.blocks)
         if det:
             parser.set_fields('a')
         if args.fields:
@@ -844,28 +1049,29 @@ def main():
         if parser.errors and parser.field_b:
             print(*parser.errors, sep='\n')
 
-        if parser.log:
+        if not parser.empty:
             # полный список, с возможными повторениями
-            seen_uid = [u['uid'] for u in parser.seen_ver if u['uid'] is not None]
+            seen_uid = [b.uid for b in parser.blocks if b.uid is not None]
             # пропущенный список, с возможными повторениями
             missing_uid = parser.db.required(seen_uid)
 
-            # Если есть детектируемые версии, то выведем подробный список версий
             banner = []
+            if cry:
+                banner.append('Отсутствует модуль расшифровки. Не всё будет раскодировано.'
+                              ' Попробуйте раскодировать через бота https://t.me/sllogbot')
+
+            # Если есть детектируемые версии, то выведем подробный список версий
             if det:
                 if parser.field_a:
                     banner.append(f'Строки, помеченные "!", возможно, раскодированы неверно')
-                for v in parser.seen_ver:
-                    mark = '!' if v['det'] else ' '
-                    ver = f"{v['ver'][0]}.{v['ver'][1]}" if v['ver'] is not None else '?.?.?'
-                    uid = uid2str(v['uid'])
-                    m = ' - нет в базе!' if v['uid'] in missing_uid else ' '*14 if missing_uid else ''
-                    ver_list = [f'{v[0]}.{v[1]}' for v in v['ver_list']]
-                    if v['enc']:
-                        banner.append(f"! зашифровано       uid: {uid:>32}{m}  Версия: {ver:13}")
-                    else:
-                        banner.append(f"{mark} будет использован uid: {uid:>32}{m}  Версия: {ver:13}  "
-                                      f"Возможные uid, ver: {v['uid_list']}, {ver_list}")
+                for b in parser.blocks:
+                    mark = '!' if b.det else ' '
+                    ver = f"{b.ver[0]}.{b.ver[1]}" if b.ver is not None else '?.?.?'
+                    uid = uid2str(b.uid)
+                    m = ' - нет в базе!' if b.uid in missing_uid else ' '*14 if missing_uid else ''
+                    ver_list = [f'{v[0]}.{v[1]}' for v in b.ver_list]
+                    banner.append(f"{mark} будет использован uid: {uid:>32}{m}  Версия: {ver:13}  "
+                                  f"Возможные uid, ver: {b.uid_list}, {ver_list}")
             else:
                 for u in missing_uid:
                     vv = parser.db.ver_list(u)
@@ -873,7 +1079,7 @@ def main():
                     if vv:
                         add_info = ''
                     else:
-                        ver_list = [s['ver_list'] for s in parser.seen_ver if s['uid'] == u][0]
+                        ver_list = [b.ver_list for b in parser.blocks if b.uid == u][0]
                         ver_list = [f'{v[0]}.{v[1]}' for v in ver_list]
                         add_info = f'  Возможные ver: {ver_list}'
                     banner.append(f'Отсутствует база для версии {uid2str(u)} [{ver}]{add_info}')
@@ -885,15 +1091,16 @@ def main():
         for line in parser.log:
             if args.split is not None:
                 if line.rid not in parser.db.services_rid:
-                    if last_ts is not None:
-                        dm = line.abs_ts - last_ts
+                    abs_ts = line.abs_ts
+                    if None not in (last_ts, abs_ts):
+                        dm = abs_ts - last_ts
                         sign = '+' if dm >= 0 else '-'
                         dm = abs(dm)
                         if dm > args.split:
                             ms = dm % 1000
                             ds = dm // 1000
                             print(f'{sign}{ds if ds else ""}.{ms}')
-                    last_ts = line.abs_ts
+                    last_ts = abs_ts
             print(line)
 
 
