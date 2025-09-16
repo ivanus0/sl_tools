@@ -240,7 +240,7 @@ class DB:
 
     db_common = {
         RID_CHANGEUID: ('Предыдущий UID: %.32s', 'UID', 'UID_CHANGE'),
-        RID_TIMESTAMP: ('Временная метка %d сек от 2012.01.01', 'TIME', 'TIME_UTC'),
+        RID_TIMESTAMP: ('Временная метка %u сек от 2012.01.01', 'TIME', 'TIME_UTC'),
     }
 
     services_rid = (
@@ -437,7 +437,7 @@ class Parser:
             :param new_uid: новый uid
             """
             self.uid = new_uid
-            new_decrypt = DB.get_decrypt(new_uid)
+            new_decrypt = decrypt_test if new_uid == 'test' else DB.get_decrypt(new_uid)
             if self.decrypt != new_decrypt:
                 if self.decrypt:
                     # ф-ия расшифровки изменилась, нужно удалить то что уже расшифровали старой ф-ией
@@ -446,11 +446,20 @@ class Parser:
                 self.decrypt = new_decrypt
 
         def complete(self, block_uid, blocks):
-            if self.lines:
-                # check encryption by ts field (5 is hi byte of time field)
-                test = self.lines[:64]
-                self.enc = sum(test[i].data[5] != test[i-1].data[5] for i in range(1, len(test))) / len(test) > 0.4
+            if len(self.lines) > 1:
+                # check encryption
+                test = self.lines[:1]
+                for line in self.lines[1:]:
+                    if line.rid != test[-1].rid:
+                        test.append(line)
+                        if len(test) >= 8:
+                            break
+                # check by ts field (5 is hi byte of time field)
+                if len(test) > 1:
+                    self.enc = (sum(test[i].data[5] != test[i-1].data[5] for i in range(1, len(test))) / (len(test)-1) >
+                                0.4)
 
+            if self.lines:
                 self.set_uid(block_uid)
                 blocks.append(self)
 
@@ -532,7 +541,7 @@ class Parser:
             if self.block.decrypt:
                 self.block.decrypt(self)
             else:
-                if not self.block.enc:
+                if self.rid == DB.RID_CHANGEUID or not self.block.enc:
                     decrypt_no(self)
 
         @property
@@ -545,14 +554,13 @@ class Parser:
         @property
         def time(self):
             """
-            Текстовое представление времени строки в виде "[dd-mm-yyyy] hh-mm-ss"
+            Текстовое представление времени строки в виде "[dd.mm.yyyy] hh-mm-ss-msc"
             Дата может отсутствовать, если не определена. Тогда время - смещение от неопределённого момента
             """
             abs_ts = self.abs_ts
             is_abs = abs_ts is not None
             t = abs_ts if is_abs else self.ts
-            sec = t // 1000
-            ms = t % 1000
+            sec, ms = divmod(t, 1000)
             # так немного быстрее, чем time.strftime
             t = time.gmtime(sec)
             d = f'{t.tm_mday:02}.{t.tm_mon:02}.{t.tm_year:04} ' if is_abs else '           '
@@ -563,7 +571,7 @@ class Parser:
             # Для корректного отображение строка должна быть предварительно раскодирована prep()
             # При штатной выборке через Parser.log это произойдёт автоматически
 
-            enc_stub = self.payload is None and self.rid != DB.RID_CHANGEUID
+            enc_stub = self.payload is None
             try:
                 if self.rul is None:
                     msg = '<encrypted line>' if enc_stub else f'unknown <0x{self.rid:04x}>'
@@ -940,6 +948,79 @@ class Parser:
 
             line.offset_ts = last_offset_timestamp
 
+    def print(self, file=None, fields=None, details=None, split=None, ad=None):
+        det = any(b.det for b in self.blocks)
+        cry = any(b.enc and b.decrypt is None for b in self.blocks)
+
+        # полный список, с возможными повторениями
+        seen_uid = [b.uid for b in self.blocks if b.uid is not None]
+        # пропущенный список, с возможными повторениями
+        missing_uid = self.db.required(seen_uid)
+
+        if det:
+            self.set_fields('a')
+        if fields:
+            self.set_fields(fields)
+
+        if self.errors and self.field_b:
+            print(*self.errors, sep='\n', file=file)
+
+        banner = []
+        if details and (get_details := get_decrypt_proc('details')):
+            banner.extend(get_details(self))
+
+        if cry and not decrypt_mod:
+            banner.append('Отсутствует модуль расшифровки. Не всё будет раскодировано.')
+
+        # Если есть детектируемые версии, то выведем подробный список версий
+        if det:
+            if self.field_a:
+                banner.append(f'Строки, помеченные "!", возможно, раскодированы неверно')
+            for b in self.blocks:
+                mark = '!' if b.det else ' '
+                ver = f"{b.ver[0]}.{b.ver[1]}" if b.ver is not None else '?.?.?'
+                uid = uid2str(b.uid)
+                m = ' - нет в базе!' if b.uid in missing_uid else ' '*14 if missing_uid else ''
+                ver_list = [f'{v[0]}.{v[1]}' for v in b.ver_list]
+                banner.append(f"{mark} будет использован uid: {uid:>32}{m}  Версия: {ver:13}  "
+                              f"Возможные uid, ver: {b.uid_list}, {ver_list}")
+        else:
+            for u in missing_uid:
+                vv = self.db.ver_list(u)
+                ver = ', '.join([f'{v[0]}.{v[1]}' for v in vv]) if vv else '?.?.?'
+                if vv:
+                    add_info = ''
+                else:
+                    ver_list = [b.ver_list for b in self.blocks if b.uid == u][0]
+                    ver_list = [f'{v[0]}.{v[1]}' for v in ver_list]
+                    add_info = f'  Возможные ver: {ver_list}'
+                banner.append(f'Отсутствует база для версии {uid2str(u)} [{ver}]{add_info}')
+
+        if missing_uid or (cry and not decrypt_mod):
+            if ad:
+                banner.append('Попробуйте раскодировать через бота https://t.me/sllogbot')
+
+        if banner and self.field_b:
+            print(*banner, sep='\n', file=file)
+
+        if not self.empty:
+            if split is None:
+                print(*map(str, self.log), sep='\n', file=file)
+            else:
+                last_ts = None
+                for line in self.log:
+                    if line.rid not in self.db.services_rid:
+                        abs_ts = line.abs_ts
+                        if None not in (last_ts, abs_ts):
+                            dm = abs_ts - last_ts
+                            sign = '+' if dm >= 0 else '-'
+                            dm = abs(dm)
+                            if dm > split:
+                                ds, ms = divmod(dm, 1000)
+                                print(f'{sign}{ds if ds else ""}.{ms}', file=file)
+                        last_ts = abs_ts
+                    print(line, file=file)
+
 
 def get_args():
     default = Parser.INIT_FIELDS
@@ -976,7 +1057,8 @@ def get_args():
         h = '* ' if up in default and lo in desc else ''
         g.add_argument(f'-{up}', dest='fields', action='append_const', const=up,
                        help=h+desc[lo][1] if lo in desc else None)
-    parser.add_argument(f'-1', dest='fields', action='append_const', const='1')
+    parser.add_argument(f'-0', dest='details', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument(f'-1', dest='fields', action='append_const', const='1', help=argparse.SUPPRESS)
     parser.add_argument('--split', default=None, type=int,
                         help='Разбивать вывод, если время между записями превысит заданное значение, ms')
     parser.add_argument('--uid', default=None, type=str, dest='uid', nargs='+',
@@ -1024,84 +1106,21 @@ def main():
     args = get_args()
 
     if args.output:
-        # Выходной файл указан, перенаправляем в него stdout
-        sys.stdout = open(args.output, 'w')
+        # Перенаправляем вывод в указанный файл
+        file = open(args.output, 'w')
+    elif not sys.stdout.seekable():
+        # Файл не указан и похоже вывод в консоль - генерим имя файла
+        output = pathlib.Path(args.log).with_suffix(time.strftime('.%d%m%y%H%M%S.txt', time.localtime()))
+        print(f'Пишем в {output}')
+        file = open(output, 'w')
     else:
-        if not sys.stdout.seekable():
-            # Файл не указан и похоже вывод в консоль
-            # генерим имя файла
-            p = pathlib.Path(args.log)
-            output = p.with_suffix(time.strftime('.%d%m%y%H%M%S.txt', time.localtime()))
-            print(f'Пишем в {output}')
-            sys.stdout = output.open('w')
+        # В остальных случаях вывод результата в консоль
+        file = None
 
     content = get_log_content(args.log)
     if content:
         parser = Parser(content, args.uid)
-
-        det = any(b.det for b in parser.blocks)
-        cry = any(b.enc and b.decrypt is None for b in parser.blocks)
-        if det:
-            parser.set_fields('a')
-        if args.fields:
-            parser.set_fields(args.fields)
-
-        if parser.errors and parser.field_b:
-            print(*parser.errors, sep='\n')
-
-        if not parser.empty:
-            # полный список, с возможными повторениями
-            seen_uid = [b.uid for b in parser.blocks if b.uid is not None]
-            # пропущенный список, с возможными повторениями
-            missing_uid = parser.db.required(seen_uid)
-
-            banner = []
-            if cry:
-                banner.append('Отсутствует модуль расшифровки. Не всё будет раскодировано.'
-                              ' Попробуйте раскодировать через бота https://t.me/sllogbot')
-
-            # Если есть детектируемые версии, то выведем подробный список версий
-            if det:
-                if parser.field_a:
-                    banner.append(f'Строки, помеченные "!", возможно, раскодированы неверно')
-                for b in parser.blocks:
-                    mark = '!' if b.det else ' '
-                    ver = f"{b.ver[0]}.{b.ver[1]}" if b.ver is not None else '?.?.?'
-                    uid = uid2str(b.uid)
-                    m = ' - нет в базе!' if b.uid in missing_uid else ' '*14 if missing_uid else ''
-                    ver_list = [f'{v[0]}.{v[1]}' for v in b.ver_list]
-                    banner.append(f"{mark} будет использован uid: {uid:>32}{m}  Версия: {ver:13}  "
-                                  f"Возможные uid, ver: {b.uid_list}, {ver_list}")
-            else:
-                for u in missing_uid:
-                    vv = parser.db.ver_list(u)
-                    ver = ', '.join([f'{v[0]}.{v[1]}' for v in vv]) if vv else '?.?.?'
-                    if vv:
-                        add_info = ''
-                    else:
-                        ver_list = [b.ver_list for b in parser.blocks if b.uid == u][0]
-                        ver_list = [f'{v[0]}.{v[1]}' for v in ver_list]
-                        add_info = f'  Возможные ver: {ver_list}'
-                    banner.append(f'Отсутствует база для версии {uid2str(u)} [{ver}]{add_info}')
-
-            if banner and parser.field_b:
-                print(*banner, sep='\n')
-
-        last_ts = None
-        for line in parser.log:
-            if args.split is not None:
-                if line.rid not in parser.db.services_rid:
-                    abs_ts = line.abs_ts
-                    if None not in (last_ts, abs_ts):
-                        dm = abs_ts - last_ts
-                        sign = '+' if dm >= 0 else '-'
-                        dm = abs(dm)
-                        if dm > args.split:
-                            ms = dm % 1000
-                            ds = dm // 1000
-                            print(f'{sign}{ds if ds else ""}.{ms}')
-                    last_ts = abs_ts
-            print(line)
+        parser.print(file=file, fields=args.fields, details=args.details, split=args.split, ad=True)
 
 
 if __name__ == "__main__":
