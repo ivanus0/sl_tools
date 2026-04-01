@@ -11,19 +11,27 @@ import base64
 import zlib
 from itertools import zip_longest
 from types import SimpleNamespace
+from collections.abc import Callable
 
 import log_db
 
 
-try:
-    decrypt_mod = importlib.import_module('decrypt')
-except ImportError:
-    decrypt_mod = None
+def load_decrypt_mod():
+    mod_name = 'decrypt'
+    try:
+        return importlib.import_module(mod_name)
+    except ImportError as e:
+        if e.name != mod_name:
+            print(f'{mod_name} не загружен: {e}')
+        else:
+            print('Отсутствует модуль расшифровки')
+        return None
+
+decrypt_mod = load_decrypt_mod()
 
 
-def get_decrypt_proc(name):
+def get_decrypt_proc(name) -> Callable | None:
     return getattr(decrypt_mod, name, None) or getattr(log_db, name, None)
-
 
 decrypt_test = get_decrypt_proc('decrypt_test')
 
@@ -79,7 +87,7 @@ def dump(b, width=64, split=None, show_ascii=True):
         #         asc_part.append(' '*c)
         v = b[i]
         hex_part.append(f'{v:02x}')
-        if is1251(b[i]):
+        if is1251(v):
             asc_part.append(bytes([v]).decode('cp1251', errors='ignore'))
         else:
             asc_part.append('.')
@@ -166,7 +174,8 @@ class Sprintf:
     def string(self):
         return self._string
 
-    def unpack_buf(self, buf):
+    def unpack_line(self, line):
+        buf = line.payload
         offset = 0
         self.args = []
         for arg in self._specs:
@@ -207,7 +216,11 @@ class Sprintf:
 
             elif spec == 'c':
                 chunk = buf[offset:offset + 1]
-                value = chunk.decode('cp1251', errors='backslashreplace')
+                if chunk != b'\x98':
+                    value = chunk.decode('cp1251', errors='backslashreplace')
+                else:
+                    # Исключительный случай
+                    value = ' '
                 offset += 1
 
             elif spec in self._conversion:
@@ -257,11 +270,11 @@ class DB:
     RF_FLG_OPT = 4
 
     @staticmethod
-    def check_db_ver():
+    def check_db_ver() -> bool:
         return hasattr(log_db, 'db_ver') and log_db.db_ver == 4
 
     @staticmethod
-    def _get_rul_indexes(uid):
+    def _get_rul_indexes(uid) -> tuple[int, ...] | None:
         if uid not in DB.db:
             DB.db[uid] = None
             if uid in log_db.db:
@@ -298,7 +311,7 @@ class DB:
 
         return DB.db[uid]
 
-    def get_rule(self, uid, rid):
+    def get_rule(self, uid, rid) -> tuple | None:
         if uid is not None:
             rul_indexes = self._get_rul_indexes(uid)
             if rul_indexes:
@@ -342,7 +355,7 @@ class DB:
         return [uid for uid in uid_list if not self._get_rul_indexes(uid)]
 
     @staticmethod
-    def get_decrypt(uid):
+    def get_decrypt(uid) -> Callable | None:
         """
         Вернёт ф-ию расшифровки или None, если не найдена
         """
@@ -579,7 +592,7 @@ class Parser:
                     src = ''
                 else:
                     fmt = self.rul[DB.RF_FMT]
-                    src = self.rul[DB.RF_SRC]
+                    src = get_opt_field(self.rul, DB.RF_SRC, '?')
                     level = get_opt_field(self.rul, DB.RF_LEV_OPT)
 
                     if enc_stub:
@@ -588,12 +601,12 @@ class Parser:
                     else:
                         s = Sprintf(fmt)
                         if self.parser.field_c:
-                            s.unpack_buf(self.payload)
+                            s.unpack_line(self)
                             cbk = get_opt_field(self.rul, DB.RF_CBK_OPT)
                             cb = None if cbk is None else getattr(log_db, cbk, None)
                             msg = s.tostring_cb(cb, self)
                         else:
-                            err = s.unpack_buf(self.payload)
+                            err = s.unpack_line(self)
                             if err:
                                 raise err
                             msg = s.tostring_fast()
@@ -645,7 +658,7 @@ class Parser:
 
             return ' '.join(fields)
 
-    def __init__(self, content, custom_uid_list=None):
+    def __init__(self, content: bytes, custom_uid_list: list[str] | None=None):
         self.field_b = self.field_p = self.field_a = self.field_v = self.field_u = self.field_t = False
         self.field_r = self.field_l = self.field_s = self.field_m = self.field_d = self.field_c = False
         self.field_1 = True
@@ -732,7 +745,7 @@ class Parser:
     def __complete(self):
         self.__store_chunk()
 
-    def parse_log_file(self, content):
+    def parse_log_file(self, content: bytes):
         # Иногда вместо дампа лога попадаются файлы в другом формате, содержащий zip c meta.xml.
         # Всегда размером 1052. Но, учитывая структуру файла, может быть и больше.
         if 4 <= len(content) <= 4124:
@@ -797,7 +810,7 @@ class Parser:
             position += 1
         self.__complete()
 
-    def preprocess(self, custom_uid_list):
+    def preprocess(self, custom_uid_list: list[str] | None):
         """
         Предварительная обработка лога:
          - определяет версию
@@ -820,7 +833,7 @@ class Parser:
                 rule = self.db.get_rule(None, line.rid)
                 if rule is not None:
                     s = Sprintf(rule[DB.RF_FMT])
-                    s.unpack_buf(line.payload)
+                    s.unpack_line(line)
                     uid = s.args[0]
                     # Попадались пакеты, когда UID заканчивался не /0. Поэтому может быть это и не %s, а %.32s
                     # если был /0, то оставляем неопределённый uid
@@ -939,7 +952,7 @@ class Parser:
                 if line.payload:
                     rule = self.db.get_rule(None, line.rid)
                     s = Sprintf(rule[0])
-                    s.unpack_buf(line.payload)
+                    s.unpack_line(line)
                     i1 = s.args[0]
                     # i1 = struct.unpack('<I', line.payload[:4])[0]
                     last_offset_timestamp = 1000 * (i1 - line.ts // 1000)
@@ -948,7 +961,7 @@ class Parser:
 
             line.offset_ts = last_offset_timestamp
 
-    def print(self, file=None, fields=None, details=None, split=None, ad=None):
+    def print(self, file=None, fields=None, details=None, split=None, ad=True):
         det = any(b.det for b in self.blocks)
         cry = any(b.enc and b.decrypt is None for b in self.blocks)
 
@@ -978,12 +991,12 @@ class Parser:
                 banner.append(f'Строки, помеченные "!", возможно, раскодированы неверно')
             for b in self.blocks:
                 mark = '!' if b.det else ' '
-                ver = f"{b.ver[0]}.{b.ver[1]}" if b.ver is not None else '?.?.?'
+                ver = f'{b.ver[0]}.{b.ver[1]}' if b.ver is not None else '?.?.?'
                 uid = uid2str(b.uid)
                 m = ' - нет в базе!' if b.uid in missing_uid else ' '*14 if missing_uid else ''
                 ver_list = [f'{v[0]}.{v[1]}' for v in b.ver_list]
-                banner.append(f"{mark} будет использован uid: {uid:>32}{m}  Версия: {ver:13}  "
-                              f"Возможные uid, ver: {b.uid_list}, {ver_list}")
+                banner.append(f'{mark} будет использован uid: {uid:>32}{m}  Версия: {ver:13}  '
+                              f'Возможные uid, ver: {b.uid_list}, {ver_list}')
         else:
             for u in missing_uid:
                 vv = self.db.ver_list(u)
@@ -998,7 +1011,8 @@ class Parser:
 
         if missing_uid or (cry and not decrypt_mod):
             if ad:
-                banner.append('Попробуйте раскодировать через бота https://t.me/sllogbot')
+                banner.append('\nЕсли вам нужны полные данные, '
+                              'попробуйте переслать файл боту https://t.me/sllogbot или на почту sllogbot@gmail.com\n')
 
         if banner and self.field_b:
             print(*banner, sep='\n', file=file)
@@ -1069,7 +1083,7 @@ def get_args():
     return args
 
 
-def get_log_content(filename) -> None | bytes:
+def get_log_content(filename) -> bytes | None:
     p = pathlib.Path(filename)
     if not p.is_file():
         print('Файл не найден')
@@ -1120,7 +1134,7 @@ def main():
     content = get_log_content(args.log)
     if content:
         parser = Parser(content, args.uid)
-        parser.print(file=file, fields=args.fields, details=args.details, split=args.split, ad=True)
+        parser.print(file=file, fields=args.fields, details=args.details, split=args.split)
 
 
 if __name__ == "__main__":
